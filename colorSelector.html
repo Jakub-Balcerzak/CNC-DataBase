@@ -66,17 +66,25 @@
     </form>
 
     <script>
-      function submitColors() {
-        const form = document.getElementById('colorForm');
-        const formData = new FormData(form);
-        const result = {};
-        for (const [key, val] of formData.entries()) {
-          result[key] = val || 'Bez koloru';
-        }
-        google.script.run.withSuccessHandler(() => {
-          google.script.host.close();
-        }).startDownloadWithColors(result, '<?= setId ?>');
-      }
-    </script>
+  function submitColors() {
+    const form = document.getElementById('colorForm');
+    const btn = form.querySelector('button');
+    
+    // 🔒 Zablokuj przycisk
+    btn.disabled = true;
+    btn.textContent = 'Trwa pobieranie...';
+
+    const formData = new FormData(form);
+    const result = {};
+    for (const [key, val] of formData.entries()) {
+      result[key] = val || 'Bez koloru';
+    }
+
+    // Wywołanie serwera
+    google.script.run.withSuccessHandler(() => {
+      google.script.host.close(); // zamknięcie okna po zakończeniu
+    }).startDownloadWithColors(result, '<?= setId ?>');
+  }
+</script>
   </body>
 </html>
