@@ -86,12 +86,12 @@ function promptAndDownloadModule() {
  */
 function downloadSetFilesWithColors(setId) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const ui = SpreadsheetApp.getUi();
-
   const sheetZest = ss.getSheetByName(SHEET_ZESTAWY);
   const sheetMod = ss.getSheetByName(SHEET_MODULE);
+  const ui = SpreadsheetApp.getUi();
+
   if (!sheetZest || !sheetMod) {
-    ui.alert('Błąd', `Brakuje wymaganych arkuszy: "${SHEET_ZESTAWY}" lub "${SHEET_MODULE}".`);
+    ui.alert('Błąd', `Brakuje arkuszy "${SHEET_ZESTAWY}" lub "${SHEET_MODULE}".`);
     return;
   }
 
@@ -105,74 +105,41 @@ function downloadSetFilesWithColors(setId) {
 
   const startElements = zestawyMap[setId];
   if (!startElements || startElements.length === 0) {
-    ui.alert('Nie znaleziono zestawu', `Nie znaleziono wierszy o Nr zestawu = "${setId}".`);
+    ui.alert('Nie znaleziono zestawu', `Brak wierszy o Nr zestawu = "${setId}".`);
     return;
   }
 
-  // 🧩 Zbierz nazwy elementów (tylko unikalne)
-  const elementNames = [];
-  const collectElementsRecursive = (elements) => {
-    for (let e of elements) {
-      const name = e.text.trim();
-      if (!isModuleName(name)) {
-        if (!elementNames.includes(name)) elementNames.push(name);
+  // 🔍 Zbierz listę wszystkich unikalnych elementów (rekurencyjnie)
+  const elements = [];
+  const collect = (list) => {
+    for (const e of list) {
+      const n = e.text.trim();
+      if (!isModuleName(n)) {
+        if (!elements.find(el => el.text === n)) elements.push(e);
       } else {
-        const children = modulesMap[name];
-        if (children && children.length) collectElementsRecursive(children);
+        const sub = modulesMap[n];
+        if (sub && sub.length) collect(sub);
       }
     }
   };
-  collectElementsRecursive(startElements);
+  collect(startElements);
 
-  // 🧩 Zapytaj użytkownika o kolor dla każdego elementu
-  const colorMap = {};
-  for (const el of elementNames) {
-    const resp = ui.prompt(`Kolor elementu`, `Podaj nazwę koloru (folderu) dla ${el}:`, ui.ButtonSet.OK_CANCEL);
-    if (resp.getSelectedButton() !== ui.Button.OK) {
-      ui.alert('Anulowano przypisywanie kolorów.');
-      return;
-    }
-    const color = resp.getResponseText().trim() || 'Bez koloru';
-    colorMap[el] = color;
+  if (elements.length === 0) {
+    ui.alert('Brak elementów do pobrania.');
+    return;
   }
 
-  // 🧩 Utwórz folder główny
-  const folderName = `Rejestr Plików CNC - Pobrania ${timestampForName()}`;
-  const folder = DriveApp.createFolder(folderName);
-  const folderUrl = folder.getUrl();
+  // 🧩 Przygotuj dane do HTML
+  const htmlTemplate = HtmlService.createTemplateFromFile('colorSelector');
+  htmlTemplate.data = elements;
+  htmlTemplate.setId = setId;
 
-  // 🧩 Proces pobierania
-  const visited = {};
-  const missingLinks = [];
-  const downloaded = [];
-  const errors = [];
+  const htmlOutput = htmlTemplate.evaluate()
+    .setTitle(`Kolory dla ${setId}`)
+    .setWidth(600)
+    .setHeight(500);
 
-  for (let e of startElements) {
-    processElementRecursiveWithColor(e.text, e.richLink, modulesMap, zestawyMap, visited, folder, downloaded, missingLinks, errors, colorMap);
-  }
-
-  // 🧩 Podsumowanie
-  const summaryLines = [];
-  summaryLines.push(`📁 Utworzony folder:`);
-  summaryLines.push(folderUrl);
-  summaryLines.push('');
-  summaryLines.push(`Pobrano plików: ${downloaded.length}`);
-  if (downloaded.length) {
-    downloaded.slice(0, 20).forEach(d => summaryLines.push(`• ${d.name} → ${d.color}`));
-    if (downloaded.length > 20) summaryLines.push(`... + ${downloaded.length - 20} innych`);
-  }
-  if (missingLinks.length) {
-    summaryLines.push('');
-    summaryLines.push(`Elementy bez hiperłącza (${missingLinks.length}):`);
-    missingLinks.forEach(m => summaryLines.push(`• ${m}`));
-  }
-  if (errors.length) {
-    summaryLines.push('');
-    summaryLines.push(`Błędy (${errors.length}):`);
-    errors.forEach(err => summaryLines.push(`• ${err}`));
-  }
-
-  ui.alert('Pobieranie zakończone', summaryLines.join('\n'), ui.ButtonSet.OK);
+  SpreadsheetApp.getUi().showModalDialog(htmlOutput, `Kolory dla ${setId}`);
 }
 
 
@@ -646,6 +613,56 @@ function getOrCreateSubfolder(parentFolder, subfolderName) {
   const existing = parentFolder.getFoldersByName(subfolderName);
   if (existing.hasNext()) return existing.next();
   return parentFolder.createFolder(subfolderName);
+}
+
+function startDownloadWithColors(colorMap, setId) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  const sheetZest = ss.getSheetByName(SHEET_ZESTAWY);
+  const sheetMod = ss.getSheetByName(SHEET_MODULE);
+
+  const zestValues = sheetZest.getDataRange().getValues();
+  const zestRich = sheetZest.getDataRange().getRichTextValues();
+  const modValues = sheetMod.getDataRange().getValues();
+  const modRich = sheetMod.getDataRange().getRichTextValues();
+
+  const zestawyMap = buildMapForSheet(zestValues, zestRich, 0, 1, SHEET_ZESTAWY).map;
+  const modulesMap = buildMapForSheet(modValues, modRich, 0, 1, SHEET_MODULE).map;
+
+  const startElements = zestawyMap[setId];
+  if (!startElements) {
+    ui.alert('Nie znaleziono zestawu ' + setId);
+    return;
+  }
+
+  const folderName = `Rejestr Plików CNC - Pobrania ${timestampForName()}`;
+  const folder = DriveApp.createFolder(folderName);
+  const folderUrl = folder.getUrl();
+
+  const visited = {};
+  const missingLinks = [];
+  const downloaded = [];
+  const errors = [];
+
+  for (let e of startElements) {
+    processElementRecursiveWithColor(e.text, e.richLink, modulesMap, zestawyMap, visited, folder, downloaded, missingLinks, errors, colorMap);
+  }
+
+  const summary = [];
+  summary.push(`📁 Folder: ${folderUrl}`);
+  summary.push(`Pobrano ${downloaded.length} plików.`);
+  if (missingLinks.length) {
+    summary.push('');
+    summary.push('❌ Brak hiperłączy dla:');
+    missingLinks.forEach(m => summary.push('• ' + m));
+  }
+  if (errors.length) {
+    summary.push('');
+    summary.push('⚠️ Błędy:');
+    errors.forEach(e => summary.push('• ' + e));
+  }
+
+  ui.alert('Zakończono', summary.join('\n'), ui.ButtonSet.OK);
 }
 
 /**

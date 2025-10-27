@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <style>
+      body {
+        font-family: "Segoe UI", sans-serif;
+        margin: 16px;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+      }
+      th, td {
+        padding: 8px;
+        border-bottom: 1px solid #ccc;
+      }
+      input[type="text"] {
+        width: 100%;
+        padding: 4px;
+      }
+      img {
+        max-width: 80px;
+        max-height: 80px;
+      }
+      .btn {
+        background-color: #1a73e8;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        margin-top: 12px;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .btn:hover {
+        background-color: #0c5fca;
+      }
+    </style>
+  </head>
+  <body>
+    <h3>Ustal kolory dla zestawu <?= setId ?></h3>
+    <form id="colorForm">
+      <table>
+        <tr>
+          <th>Nr kat. elementu</th>
+          <th>Nazwa elementu</th>
+          <th>Podgląd</th>
+          <th>Kolor / folder</th>
+        </tr>
+        <? for (let e of data) { ?>
+          <tr>
+            <td><?= e.text ?></td>
+            <td><?= e.name || '' ?></td>
+            <td>
+              <? if (e.richLink) { ?>
+                <iframe src="<?= e.richLink.replace('view?usp=drive_link','preview') ?>" width="80" height="80"></iframe>
+              <? } else { ?>
+                brak
+              <? } ?>
+            </td>
+            <td><input type="text" name="<?= e.text ?>" placeholder="np. Czerwony"></td>
+          </tr>
+        <? } ?>
+      </table>
+      <button type="button" class="btn" onclick="submitColors()">Start pobieranie</button>
+    </form>
+
+    <script>
+      function submitColors() {
+        const form = document.getElementById('colorForm');
+        const formData = new FormData(form);
+        const result = {};
+        for (const [key, val] of formData.entries()) {
+          result[key] = val || 'Bez koloru';
+        }
+        google.script.run.withSuccessHandler(() => {
+          google.script.host.close();
+        }).startDownloadWithColors(result, '<?= setId ?>');
+      }
+    </script>
+  </body>
+</html>
