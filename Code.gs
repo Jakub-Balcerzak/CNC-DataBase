@@ -29,7 +29,110 @@ function onOpen() {
 
   ui.createMenu('Sync')
     .addItem('Ustaw / edytuj link dla elementu...', 'promptAndSyncLink')
+    .addItem('Porównaj linki (SyncLinks)', 'promptAndCompareLinks')
     .addToUi();
+}
+
+function promptAndCompareLinks() {
+  const ui = SpreadsheetApp.getUi();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheetsToCheck = ['Zestawy CNC', 'Moduły CNC'];
+
+  // 1️⃣ Pytanie o numer katalogowy elementu
+  const resp = ui.prompt('Porównaj linki', 'Podaj numer katalogowy elementu (np. H_P3300_14):', ui.ButtonSet.OK_CANCEL);
+  if (resp.getSelectedButton() !== ui.Button.OK) return;
+  const elementName = resp.getResponseText().trim();
+  if (!elementName) {
+    ui.alert('Nie podano numeru katalogowego elementu.');
+    return;
+  }
+
+  // 2️⃣ Zbierz wszystkie linki dla tego elementu ze wszystkich arkuszy
+  const foundLinks = []; // [{sheet, row, link}]
+  for (const sheetName of sheetsToCheck) {
+    const sheet = ss.getSheetByName(sheetName);
+    if (!sheet) continue;
+
+    const range = sheet.getDataRange();
+    const values = range.getValues();
+    const richValues = range.getRichTextValues();
+
+    for (let r = 0; r < values.length; r++) {
+      const cellVal = String(values[r][1]).trim();
+      if (cellVal === elementName) {
+        const rich = richValues[r][1];
+        let link = null;
+        try {
+          link = rich.getLinkUrl();
+        } catch (e) {
+          link = null;
+        }
+        foundLinks.push({
+          sheet: sheetName,
+          row: r + 1,
+          link: link || '(brak linku)'
+        });
+      }
+    }
+  }
+
+  // 3️⃣ Walidacja — brak powtórzeń
+  if (foundLinks.length === 0) {
+    ui.alert('Nie znaleziono', `Nie znaleziono elementu "${elementName}" w arkuszach.`, ui.ButtonSet.OK);
+    return;
+  }
+
+  // 4️⃣ Sprawdzenie czy wszystkie linki są takie same
+  const uniqueLinks = [...new Set(foundLinks.map(f => f.link))];
+
+  if (uniqueLinks.length === 1) {
+    ui.alert('Synchronizacja OK ✅', `Wszystkie wystąpienia elementu "${elementName}" mają ten sam link:\n\n${uniqueLinks[0]}`, ui.ButtonSet.OK);
+    return;
+  }
+
+  // 5️⃣ Występują różne linki → pokaż listę i zapytaj, który ma być prawidłowy
+  let msg = `Znaleziono różne linki dla elementu "${elementName}":\n\n`;
+  foundLinks.forEach(f => {
+    msg += `📄 ${f.sheet}!B${f.row}\n→ ${f.link}\n\n`;
+  });
+  msg += `Wpisz dokładnie numer opcji (1–${uniqueLinks.length}) z poniższej listy, który ma być ustawiony jako prawidłowy:\n\n`;
+  uniqueLinks.forEach((l, i) => {
+    msg += `${i + 1}. ${l}\n`;
+  });
+
+  const resp2 = ui.prompt('Wybierz link do synchronizacji', msg, ui.ButtonSet.OK_CANCEL);
+  if (resp2.getSelectedButton() !== ui.Button.OK) return;
+  const chosenIdx = parseInt(resp2.getResponseText().trim());
+  if (isNaN(chosenIdx) || chosenIdx < 1 || chosenIdx > uniqueLinks.length) {
+    ui.alert('Nieprawidłowy wybór.', ui.ButtonSet.OK);
+    return;
+  }
+
+  const correctLink = uniqueLinks[chosenIdx - 1];
+
+  // 6️⃣ Podmień wszystkie linki na wybrany
+  let updated = 0;
+  for (const sheetName of sheetsToCheck) {
+    const sheet = ss.getSheetByName(sheetName);
+    if (!sheet) continue;
+
+    const range = sheet.getDataRange();
+    const values = range.getValues();
+
+    for (let r = 0; r < values.length; r++) {
+      const cellVal = String(values[r][1]).trim();
+      if (cellVal === elementName) {
+        const richText = SpreadsheetApp.newRichTextValue()
+          .setText(cellVal)
+          .setLinkUrl(correctLink)
+          .build();
+        sheet.getRange(r + 1, 2).setRichTextValue(richText);
+        updated++;
+      }
+    }
+  }
+
+  ui.alert('Synchronizacja zakończona 🔁', `Ujednolicono ${updated} komórek dla elementu "${elementName}".\nUstawiony link:\n${correctLink}`, ui.ButtonSet.OK);
 }
 
 function promptAndDownloadWithColors() {
