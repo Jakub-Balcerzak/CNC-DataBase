@@ -1068,44 +1068,107 @@ function checkDriveLinkStatus(link) {
  * Pomija 1. wiersz (nagłówki)
  */
 function massCheckAndFixLinks() {
-  const ui = SpreadsheetApp.getUi();
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheetsToCheck = ['Zestawy CNC', 'Moduły CNC', 'Elementy CNC'];
-  const allElements = new Set();
+  const ui = SpreadsheetApp.getUi();
 
-  // 🔹 Zbierz wszystkie unikalne elementy z kolumny B, pomijając nagłówki
-  for (const sheetName of sheetsToCheck) {
+  // 1️⃣ Zbierz wszystkie wystąpienia elementów i ich linki
+  const elementLinks = {}; 
+  // Struktura: { "H-M1354-01": [ { sheet, row, link }, ... ] }
+
+  sheetsToCheck.forEach(sheetName => {
     const sheet = ss.getSheetByName(sheetName);
-    if (!sheet) continue;
-    const range = sheet.getDataRange();
-    const values = range.getValues();
-    for (let r = 1; r < values.length; r++) { // <== pomijamy nagłówek
-      const el = String(values[r][1]).trim();
-      if (el) allElements.add(el);
+    if (!sheet) return;
+    const data = sheet.getDataRange().getValues();
+    const richTexts = sheet.getDataRange().getRichTextValues();
+
+    for (let i = 1; i < data.length; i++) {
+      const name = data[i][1];
+      if (!name) continue;
+      const linkObj = richTexts[i][1];
+      const link = linkObj && linkObj.getLinkUrl ? linkObj.getLinkUrl() : null;
+
+      if (!elementLinks[name]) elementLinks[name] = [];
+      elementLinks[name].push({ sheet: sheetName, row: i + 1, link });
+    }
+  });
+
+  const inconsistencies = []; // różne linki dla tego samego elementu
+  const missingLinks = [];    // elementy bez linku, ale można je uzupełnić
+
+  // 2️⃣ Sprawdź dla każdego elementu, co się dzieje
+  for (const [name, entries] of Object.entries(elementLinks)) {
+    const uniqueLinks = [...new Set(entries.map(e => e.link).filter(l => !!l))];
+
+    if (uniqueLinks.length === 0) {
+      // brak linku nigdzie — do raportu
+      missingLinks.push({ name, entries });
+    } else if (uniqueLinks.length === 1) {
+      // jeden link — można uzupełnić brakujące komórki
+      const validLink = uniqueLinks[0];
+      entries.forEach(e => {
+        if (!e.link) {
+          const sheet = ss.getSheetByName(e.sheet);
+          const cell = sheet.getRange(e.row, 2);
+          const richText = SpreadsheetApp.newRichTextValue()
+            .setText(name)
+            .setLinkUrl(validLink)
+            .build();
+          cell.setRichTextValue(richText);
+        }
+      });
+    } else {
+      // więcej niż jeden unikalny link → konflikt
+      inconsistencies.push({ name, uniqueLinks, entries });
     }
   }
 
-  if (allElements.size === 0) {
-    ui.alert('Brak elementów do sprawdzenia.');
-    return;
+   // 3️⃣ Jeśli są konflikty — zapytaj użytkownika o każdy z nich
+  if (inconsistencies.length > 0) {
+    for (const conflict of inconsistencies) {
+      const { name, uniqueLinks, entries } = conflict;
+      let msg = `Element "${name}" ma różne linki:\n\n`;
+      uniqueLinks.forEach((l, i) => {
+        msg += `${i + 1}. ${l}\n`;
+      });
+      msg += `\nWpisz numer (1-${uniqueLinks.length}), który link ma być używany we wszystkich wystąpieniach.`;
+
+      const button = ui.prompt(msg, ui.ButtonSet.OK_CANCEL);
+      if (button.getSelectedButton() === ui.Button.OK) {
+        const response = button.getResponseText().trim();
+        const index = parseInt(response, 10);
+
+        if (!isNaN(index) && index >= 1 && index <= uniqueLinks.length) {
+          const chosen = uniqueLinks[index - 1]; // wybierz link wg numeru
+          entries.forEach(e => {
+            const sheet = ss.getSheetByName(e.sheet);
+            const cell = sheet.getRange(e.row, 2);
+            const richText = SpreadsheetApp.newRichTextValue()
+              .setText(name)
+              .setLinkUrl(chosen)
+              .build();
+            cell.setRichTextValue(richText);
+          });
+        } else {
+          ui.alert(`❌ Podano nieprawidłowy numer. Oczekiwano wartości od 1 do ${uniqueLinks.length}.`);
+        }
+      }
+    }
   }
 
-  ui.alert(`🔍 Rozpoczynam sprawdzanie ${allElements.size} elementów.\nKliknij OK, aby rozpocząć.`);
-
-  let checked = 0;
-  let fixed = 0;
-  let skipped = 0;
-
-  // 🔹 Sprawdzaj każdy element po kolei – interaktywnie
-  for (const elementName of allElements) {
-    const result = compareAndFixElementLinks(elementName, ss, ui);
-    if (result === 'fixed') fixed++;
-    if (result === 'skipped') skipped++;
-    checked++;
+  // 4️⃣ Raport o brakach
+  if (missingLinks.length > 0) {
+    let msg = "⚠️ Elementy, które nigdzie nie mają przypisanego linku:\n\n";
+    missingLinks.forEach(e => {
+      msg += `• ${e.name} (wystąpień: ${e.entries.length})\n`;
+    });
+    ui.alert(msg);
+  } else if (inconsistencies.length === 0) {
+    ui.alert("✅ Wszystkie elementy mają spójne linki i zostały uzupełnione, jeśli brakowało.");
   }
-
-  ui.alert(`✅ Zakończono sprawdzanie.\nSprawdzono: ${checked}\nPoprawiono: ${fixed}\nPominięto: ${skipped}`);
 }
+
+
 
 /**
  * Pomocnicza wersja promptAndCompareLinks() działająca dla jednego elementu
