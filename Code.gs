@@ -22,7 +22,7 @@ const SHEET_MODULE = 'Moduły CNC';
 function onOpen() {
   const ui = SpreadsheetApp.getUi();
   ui.createMenu('CNC')
-    .addItem('Pobierz pliki dla zestawu...', 'promptAndDownload')
+    //.addItem('Pobierz pliki dla zestawu...', 'promptAndDownload')
     .addItem('Pobierz pliki dla zestawu (z kolorami)...', 'promptAndDownloadWithColors') // 🆕 nowa opcja
     .addItem('Pobierz pliki dla modułu...', 'promptAndDownloadModule')
     .addToUi();
@@ -525,12 +525,25 @@ function buildMapForSheet(values, richValues, idxKeyCol, idxDataCol, sheetName) 
     const surface = values[r][4] ? Number(values[r][4]) : null;  // kol. E
     const name = values[r][6] ? String(values[r][6]).trim() : ''; // kol. G
 
+    // **Nowe**: pobieramy ilość z kolumny C (index 2). Jeśli pusta/nieprawidłowa -> 1
+    let count = 1;
+    try {
+      const raw = values[r][2];
+      if (raw !== '' && raw !== null && raw !== undefined) {
+        const num = Number(raw);
+        if (!isNaN(num) && num > 0) count = num;
+      }
+    } catch (e) {
+      count = 1;
+    }
+
     if (!map[key]) map[key] = [];
-    map[key].push({ text: dataText, richLink: richLink, surface: surface, name: name });
+    map[key].push({ text: dataText, richLink: richLink, surface: surface, name: name, count: count });
   }
 
   return { map };
 }
+
 
 /** 
  * Rozpoznaje, czy nazwa to moduł: zaczyna się od M lub X (wielkie lub małe rozważymy)
@@ -544,26 +557,153 @@ function isModuleName(name) {
 /**
  * Jak processElementRecursive, ale z obsługą kolorów.
  */
-function processElementRecursiveWithColor(name, providedRichLink, modulesMap, zestawyMap, visited, folder, downloaded, missingLinks, errors, colorMap) {
+function processElementRecursiveWithColor(name, providedRichLink, modulesMap, zestawyMap, visited, folder, downloaded, missingLinks, errors, colorMap, multiplier = 1) {
   name = String(name).trim();
   if (!name) return;
-  if (visited[name]) return;
-  visited[name] = true;
 
+  // blokujemy tylko moduły - elementy mogą wystąpić wielokrotnie i muszą być zliczone
   if (isModuleName(name)) {
+    if (visited[name]) return;
+    visited[name] = true;
+
     const children = modulesMap[name];
     if (!children || children.length === 0) {
       missingLinks.push(`Moduł ${name} - brak wpisów w "${SHEET_MODULE}"`);
       return;
     }
+
     for (let ch of children) {
-      processElementRecursiveWithColor(ch.text, ch.richLink, modulesMap, zestawyMap, visited, folder, downloaded, missingLinks, errors, colorMap);
+      // ch.count pochodzi z kolumny C w arkuszu modułów
+      const childMultiplier = multiplier * (ch.count || 1);
+      processElementRecursiveWithColor(ch.text, ch.richLink, modulesMap, zestawyMap, visited, folder, downloaded, missingLinks, errors, colorMap, childMultiplier);
     }
-  } else {
-    const link = providedRichLink || findLinkForElement(name, modulesMap, zestawyMap);
+    return;
+  }
+
+  // --- element końcowy ---
+  const link = providedRichLink || findLinkForElement(name, modulesMap, zestawyMap);
+  if (!link) {
+    missingLinks.push(name);
+    return;
+  }
+
+  try {
+    // pobierz dane elementu (nazwa, surface, etc.)
+    const elementData = findElementData(name, modulesMap, zestawyMap);
+    const elementCountFromSheet = (function() {
+      // Spróbuj znaleźć count dla tego elementu w modulesMap/zestawyMap
+      for (let key in modulesMap) {
+        for (const e of modulesMap[key]) {
+          if (e.text === name) return (e.count || 1);
+        }
+      }
+      for (let key in zestawyMap) {
+        for (const e of zestawyMap[key]) {
+          if (e.text === name) return (e.count || 1);
+        }
+      }
+      return 1;
+    })();
+
+    const effectiveCount = multiplier * elementCountFromSheet;
+
+    // przygotuj link do pobrania
+    const fileIdMatch = link.match(/[-\w]{25,}/);
+    const directLink = fileIdMatch ? `https://drive.google.com/uc?export=download&id=${fileIdMatch[0]}` : link;
+    const resp = UrlFetchApp.fetch(directLink, { muteHttpExceptions: true });
+    const code = resp.getResponseCode();
+    if (code < 200 || code >= 300) {
+      errors.push(`${name}: błąd HTTP ${code} przy pobieraniu ${directLink}`);
+      return;
+    }
+
+    const blob = resp.getBlob();
+    const fileName = sanitizeFileName(name) + '.dxf';
+    blob.setName(fileName);
+
+    // 🟢 Kolor (folder docelowy) - tworzymy plik tylko raz na dany element
+    const color = colorMap[name] || 'Bez koloru';
+    const colorFolder = getOrCreateSubfolder(folder, color);
+
+    // Sprawdź czy już mamy wpis w downloaded dla tego elementu+koloru
+    const existing = downloaded.find(d => d.name === name && d.color === color);
+
+    if (!existing) {
+      // utwórz plik na dysku (raz)
+      colorFolder.createFile(blob);
+      downloaded.push({
+        name: name,
+        color: color,
+        prettyName: elementData?.name || '',
+        count: effectiveCount
+      });
+    } else {
+      // nie tworzymy ponownie pliku — tylko zwiększamy liczbę
+      existing.count = (existing.count || 0) + effectiveCount;
+    }
+
+  } catch (e) {
+    errors.push(`${name}: ${e.message}`);
+  }
+}
+
+/**
+ * Nowa wersja startDownloadWithColors:
+ * - najpierw zbiera totals mapę element->ilość (uwzględniając kol. C),
+ * - potem pobiera pliki raz na element+kolor i zapisuje downloaded z .count = totals[element]
+ */
+function startDownloadWithColors(colorMap, setId) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  const sheetZest = ss.getSheetByName(SHEET_ZESTAWY);
+  const sheetMod = ss.getSheetByName(SHEET_MODULE);
+
+  const zestValues = sheetZest.getDataRange().getValues();
+  const zestRich = sheetZest.getDataRange().getRichTextValues();
+  const modValues = sheetMod.getDataRange().getValues();
+  const modRich = sheetMod.getDataRange().getRichTextValues();
+
+  const zestawyMap = buildMapForSheet(zestValues, zestRich, 0, 1, SHEET_ZESTAWY).map;
+  const modulesMap = buildMapForSheet(modValues, modRich, 0, 1, SHEET_MODULE).map;
+
+  const startElements = zestawyMap[setId];
+  if (!startElements) {
+    ui.alert('Nie znaleziono zestawu ' + setId);
+    return;
+  }
+
+  // 1) Zbierz totals: element -> totalCount
+  const totals = {}; // { elementName: totalCount }
+  const pathVisited = {}; // będzie używane w rekurencji (dla bieżącej ścieżki)
+
+  for (let e of startElements) {
+    const topCount = (typeof e.count === 'number' && !isNaN(e.count) && e.count > 0) ? e.count : 1;
+    collectElementTotals(e.text, topCount, modulesMap, zestawyMap, totals, pathVisited);
+  }
+
+  // jeśli nie ma nic do pobrania
+  const elementNames = Object.keys(totals);
+  if (elementNames.length === 0) {
+    ui.alert('Brak elementów do pobrania.');
+    return;
+  }
+
+  // 2) Utwórz folder docelowy
+  const folderName = `Rejestr Plików CNC - Pobrania ${timestampForName()}`;
+  const folder = DriveApp.createFolder(folderName);
+  const folderUrl = folder.getUrl();
+
+  const missingLinks = [];
+  const downloaded = []; // { name, color, prettyName, count }
+  const errors = [];
+
+  // 3) Dla każdego unikalnego elementu pobierz plik raz (dla przypisanego koloru) i przypisz count z totals
+  for (let name of elementNames) {
+    const count = totals[name] || 0;
+    const link = findLinkForElement(name, modulesMap, zestawyMap);
     if (!link) {
       missingLinks.push(name);
-      return;
+      continue;
     }
 
     try {
@@ -573,86 +713,147 @@ function processElementRecursiveWithColor(name, providedRichLink, modulesMap, ze
       const code = resp.getResponseCode();
       if (code < 200 || code >= 300) {
         errors.push(`${name}: błąd HTTP ${code} przy pobieraniu ${directLink}`);
-        return;
+        continue;
       }
 
       const blob = resp.getBlob();
       const fileName = sanitizeFileName(name) + '.dxf';
       blob.setName(fileName);
 
-      // 🟢 Kolor (folder docelowy)
-      const color = colorMap[name] || 'Bez koloru';
+      // kolor z mapy z dialogu (jeśli brak -> "Bez koloru")
+      const color = colorMap && colorMap[name] ? colorMap[name] : 'Bez koloru';
       const colorFolder = getOrCreateSubfolder(folder, color);
-      const file = colorFolder.createFile(blob);
+      colorFolder.createFile(blob);
 
-      downloaded.push({ name, color });
+      const elementData = findElementData(name, modulesMap, zestawyMap);
+
+      downloaded.push({
+        name: name,
+        color: color,
+        prettyName: elementData?.name || '',
+        count: count
+      });
     } catch (e) {
       errors.push(`${name}: ${e.message}`);
     }
   }
+
+  // 4) Podsumowanie i plik TXT
+  const summary = [];
+  summary.push(`📁 Folder: ${folderUrl}`);
+  summary.push(`Pobrano ${downloaded.length} plików.`);
+  if (missingLinks.length) {
+    summary.push('');
+    summary.push('❌ Brak hiperłączy dla:');
+    missingLinks.forEach(m => summary.push('• ' + m));
+  }
+  if (errors.length) {
+    summary.push('');
+    summary.push('⚠️ Błędy:');
+    errors.forEach(e => summary.push('• ' + e));
+  }
+
+  const summaryFileUrl = createSummaryTxtFile(downloaded, folder);
+  if (summaryFileUrl) {
+    summary.push('');
+    summary.push('📄 Utworzono plik podsumowania:');
+    summary.push(summaryFileUrl);
+  }
+
+  ui.alert('Zakończono', summary.join('\n'), ui.ButtonSet.OK);
 }
+
 
 /**
  * Rekurencyjnie przetwarza element/moduł.
  * - jeśli element (nie moduł): szuka hiperłącza (jeśli przekazano richLink - używa) i pobiera plik
  * - jeśli moduł: rozkłada przez modulesMap (jeśli brak -> traktuj jako brak definicji)
  */
-function processElementRecursive(name, providedRichLink, modulesMap, zestawyMap, visited, folder, downloaded, missingLinks, errors) {
+function processElementRecursive(name, providedRichLink, modulesMap, zestawyMap, visited, folder, downloaded, missingLinks, errors, multiplier = 1) {
   name = String(name).trim();
   if (!name) return;
-  if (visited[name]) return;
-  visited[name] = true;
 
   if (isModuleName(name)) {
+    if (visited[name]) return;
+    visited[name] = true;
+
     const children = modulesMap[name];
     if (!children || children.length === 0) {
       missingLinks.push(`Moduł ${name} - brak wpisów w "${SHEET_MODULE}"`);
       return;
     }
+
     for (let ch of children) {
-      processElementRecursive(ch.text, ch.richLink, modulesMap, zestawyMap, visited, folder, downloaded, missingLinks, errors);
+      const childMultiplier = multiplier * (ch.count || 1);
+      processElementRecursive(ch.text, ch.richLink, modulesMap, zestawyMap, visited, folder, downloaded, missingLinks, errors, childMultiplier);
     }
-  } else {
-    let link = providedRichLink || findLinkForElement(name, modulesMap, zestawyMap);
-    if (!link) {
-      missingLinks.push(name);
+    return;
+  }
+
+  // element końcowy
+  let link = providedRichLink || findLinkForElement(name, modulesMap, zestawyMap);
+  if (!link) {
+    missingLinks.push(name);
+    return;
+  }
+
+  // znajdź dane o elemencie
+  const elementData = findElementData(name, modulesMap, zestawyMap);
+  const elementCountFromSheet = (function() {
+    for (let key in modulesMap) {
+      for (const e of modulesMap[key]) {
+        if (e.text === name) return (e.count || 1);
+      }
+    }
+    for (let key in zestawyMap) {
+      for (const e of zestawyMap[key]) {
+        if (e.text === name) return (e.count || 1);
+      }
+    }
+    return 1;
+  })();
+
+  const effectiveCount = multiplier * elementCountFromSheet;
+
+  try {
+    let fileIdMatch = link.match(/[-\w]{25,}/);
+    let directLink = link;
+    if (fileIdMatch) {
+      directLink = `https://drive.google.com/uc?export=download&id=${fileIdMatch[0]}`;
+    }
+
+    const resp = UrlFetchApp.fetch(directLink, { muteHttpExceptions: true });
+    const code = resp.getResponseCode();
+    if (code < 200 || code >= 300) {
+      errors.push(`${name}: błąd HTTP ${code} przy pobieraniu ${directLink}`);
       return;
     }
 
-    // znajdź dane o elemencie
-    const elementData = findElementData(name, modulesMap, zestawyMap);
+    let blob = resp.getBlob();
+    const fileName = sanitizeFileName(name) + '.dxf';
+    blob.setName(fileName);
 
-    try {
-      let fileIdMatch = link.match(/[-\w]{25,}/);
-      let directLink = link;
-      if (fileIdMatch) {
-        directLink = `https://drive.google.com/uc?export=download&id=${fileIdMatch[0]}`;
-      }
-
-      const resp = UrlFetchApp.fetch(directLink, { muteHttpExceptions: true });
-      const code = resp.getResponseCode();
-      if (code < 200 || code >= 300) {
-        errors.push(`${name}: błąd HTTP ${code} przy pobieraniu ${directLink}`);
-        return;
-      }
-
-      let blob = resp.getBlob();
-      const fileName = sanitizeFileName(name) + '.dxf';
-      blob.setName(fileName);
-      const file = folder.createFile(blob);
-
+    // Tworzymy plik tylko raz; agregujemy count w downloaded
+    const existing = downloaded.find(d => d.name === name);
+    if (!existing) {
+      folder.createFile(blob);
       downloaded.push({
         name: name,
         url: directLink,
         fileId: fileIdMatch ? fileIdMatch[0] : 'unknown',
         prettyName: elementData?.name || '',
-        surface: elementData?.surface || null
+        surface: elementData?.surface || null,
+        count: effectiveCount
       });
-    } catch (e) {
-      errors.push(`${name}: ${e.message}`);
+    } else {
+      existing.count = (existing.count || 0) + effectiveCount;
     }
+
+  } catch (e) {
+    errors.push(`${name}: ${e.message}`);
   }
 }
+
 
 /**
  * Próbuje znaleźć link dla elementu:
@@ -718,55 +919,87 @@ function getOrCreateSubfolder(parentFolder, subfolderName) {
   return parentFolder.createFolder(subfolderName);
 }
 
-function startDownloadWithColors(colorMap, setId) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const ui = SpreadsheetApp.getUi();
-  const sheetZest = ss.getSheetByName(SHEET_ZESTAWY);
-  const sheetMod = ss.getSheetByName(SHEET_MODULE);
+/**
+ * Tworzy plik TXT z podsumowaniem elementów.
+ * @param {Array} downloaded - lista obiektów {name, color, namePretty, count}
+ * @param {GoogleAppsScript.Drive.Folder} folder - folder, w którym zapisujemy
+ */
+function createSummaryTxtFile(downloaded, folder) {
+  if (!downloaded || downloaded.length === 0) return null;
 
-  const zestValues = sheetZest.getDataRange().getValues();
-  const zestRich = sheetZest.getDataRange().getRichTextValues();
-  const modValues = sheetMod.getDataRange().getValues();
-  const modRich = sheetMod.getDataRange().getRichTextValues();
+  // Grupowanie po nazwie elementu + kolor (aby rozróżnić ten sam element z różnymi kolorami)
+  const grouped = {};
+  for (const item of downloaded) {
+    const key = item.name + '||' + (item.color || 'Bez koloru');
+    if (!grouped[key]) {
+      grouped[key] = { count: 0, namePretty: item.prettyName || '', color: item.color || 'Bez koloru', name: item.name };
+    }
+    grouped[key].count += (item.count || 1);
+  }
 
-  const zestawyMap = buildMapForSheet(zestValues, zestRich, 0, 1, SHEET_ZESTAWY).map;
-  const modulesMap = buildMapForSheet(modValues, modRich, 0, 1, SHEET_MODULE).map;
+  // Nagłówek tabeli
+  const lines = [];
+  lines.push('Nr kat. elementu       | Ilość | Nazwa elementu                       | Kolor');
+  lines.push('------------------------+--------+-------------------------------------+------------');
 
-  const startElements = zestawyMap[setId];
-  if (!startElements) {
-    ui.alert('Nie znaleziono zestawu ' + setId);
+  // Sortuj alfabetycznie po nazwie elementu
+  const sorted = Object.values(grouped).sort((a,b) => (a.name > b.name ? 1 : a.name < b.name ? -1 : 0));
+
+  const pad = (txt, len) => (String(txt) + ' '.repeat(len)).slice(0, len);
+
+  for (const el of sorted) {
+    lines.push(
+      `${pad(el.name, 23)}| ${pad(String(el.count), 6)}| ${pad(el.namePretty, 37)}| ${el.color}`
+    );
+  }
+
+  const content = lines.join('\n');
+  const blob = Utilities.newBlob(content, 'text/plain', 'Podsumowanie_elementów.txt');
+  const file = folder.createFile(blob);
+  return file.getUrl();
+}
+
+
+
+/**
+ * Rekurencyjnie zbiera łączną ilość każdego elementu dla danej listy startowej.
+ * - pathVisited blokuje moduł tylko na bieżącej ścieżce (zapobiega nieskończonej pętli)
+ * - modulesMap: mapa moduł -> array entries {text, richLink, count, ...}
+ */
+function collectElementTotals(name, multiplier, modulesMap, zestawyMap, totals, pathVisited) {
+  name = String(name).trim();
+  if (!name) return;
+
+  // jeśli to moduł -> rozpakuj jego dzieci
+  if (isModuleName(name)) {
+    // jeśli już na bieżącej ścieżce był ten moduł -> przerywamy (cykl)
+    if (pathVisited[name]) {
+      return;
+    }
+    pathVisited[name] = true;
+
+    const children = modulesMap[name];
+    if (!children || children.length === 0) {
+      // brak wpisów modułu — nic do sumowania (można logować, ale pomijamy)
+      pathVisited[name] = false;
+      return;
+    }
+
+    for (let ch of children) {
+      const childCount = (typeof ch.count === 'number' && !isNaN(ch.count) && ch.count > 0) ? ch.count : 1;
+      collectElementTotals(ch.text, multiplier * childCount, modulesMap, zestawyMap, totals, pathVisited);
+    }
+
+    // odblokuj moduł dla innych ścieżek
+    pathVisited[name] = false;
     return;
   }
 
-  const folderName = `Rejestr Plików CNC - Pobrania ${timestampForName()}`;
-  const folder = DriveApp.createFolder(folderName);
-  const folderUrl = folder.getUrl();
-
-  const visited = {};
-  const missingLinks = [];
-  const downloaded = [];
-  const errors = [];
-
-  for (let e of startElements) {
-    processElementRecursiveWithColor(e.text, e.richLink, modulesMap, zestawyMap, visited, folder, downloaded, missingLinks, errors, colorMap);
-  }
-
-  const summary = [];
-  summary.push(`📁 Folder: ${folderUrl}`);
-  summary.push(`Pobrano ${downloaded.length} plików.`);
-  if (missingLinks.length) {
-    summary.push('');
-    summary.push('❌ Brak hiperłączy dla:');
-    missingLinks.forEach(m => summary.push('• ' + m));
-  }
-  if (errors.length) {
-    summary.push('');
-    summary.push('⚠️ Błędy:');
-    errors.forEach(e => summary.push('• ' + e));
-  }
-
-  ui.alert('Zakończono', summary.join('\n'), ui.ButtonSet.OK);
+  // to element końcowy — sumujemy
+  const add = Number(multiplier) || 1;
+  totals[name] = (totals[name] || 0) + add;
 }
+
 
 /**
  * Próbuje odgadnąć rozszerzenie pliku:
