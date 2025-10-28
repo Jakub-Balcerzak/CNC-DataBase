@@ -36,104 +36,131 @@ function onOpen() {
 function promptAndCompareLinks() {
   const ui = SpreadsheetApp.getUi();
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheetsToCheck = ['Zestawy CNC', 'Moduły CNC'];
 
-  // 1️⃣ Pytanie o numer katalogowy elementu
-  const resp = ui.prompt('Porównaj linki', 'Podaj numer katalogowy elementu (np. H_P3300_14):', ui.ButtonSet.OK_CANCEL);
-  if (resp.getSelectedButton() !== ui.Button.OK) return;
-  const elementName = resp.getResponseText().trim();
-  if (!elementName) {
-    ui.alert('Nie podano numeru katalogowego elementu.');
-    return;
+  const elementNameResponse = ui.prompt('Porównaj linki', 'Podaj nazwę elementu:', ui.ButtonSet.OK_CANCEL);
+  if (elementNameResponse.getSelectedButton() !== ui.Button.OK) return;
+
+  const elementName = elementNameResponse.getResponseText().trim();
+  if (!elementName) return ui.alert('Nie podano nazwy elementu.');
+
+  const sheetsToCheck = ['Zestawy CNC', 'Moduły CNC', 'Elementy CNC'];
+  const foundLinks = []; // {sheet, row, link, ok, status}
+
+  function checkDriveLinkStatus(link) {
+    if (!link || link === '(brak linku)') return { ok: false, code: 0, status: 'Brak linku' };
+    const match = link.match(/[-\w]{25,}/);
+    if (!match) return { ok: false, code: 0, status: 'Nieprawidłowy format linku' };
+
+    const fileId = match[0];
+    try {
+      const file = DriveApp.getFileById(fileId);
+      file.getName();
+      return { ok: true, code: 200, status: 'OK' };
+    } catch (e) {
+      const msg = String(e);
+      if (msg.includes('File not found')) return { ok: false, code: 404, status: 'Nie znaleziono pliku' };
+      if (msg.includes('User does not have permission')) return { ok: false, code: 403, status: 'Brak dostępu' };
+      return { ok: false, code: 500, status: 'Błąd: ' + e.message };
+    }
   }
 
-  // 2️⃣ Zbierz wszystkie linki dla tego elementu ze wszystkich arkuszy
-  const foundLinks = []; // [{sheet, row, link}]
+  // Zbierz wszystkie linki
   for (const sheetName of sheetsToCheck) {
     const sheet = ss.getSheetByName(sheetName);
     if (!sheet) continue;
-
     const range = sheet.getDataRange();
     const values = range.getValues();
     const richValues = range.getRichTextValues();
 
     for (let r = 0; r < values.length; r++) {
-      const cellVal = String(values[r][1]).trim();
-      if (cellVal === elementName) {
-        const rich = richValues[r][1];
+      const name = String(values[r][1]).trim(); // kolumna B
+      if (name === elementName) {
         let link = null;
         try {
-          link = rich.getLinkUrl();
+          link = richValues[r][1]?.getLinkUrl() || '(brak linku)';
         } catch (e) {
-          link = null;
+          link = '(brak linku)';
         }
-        foundLinks.push({
-          sheet: sheetName,
-          row: r + 1,
-          link: link || '(brak linku)'
-        });
+
+        const status = checkDriveLinkStatus(link);
+        foundLinks.push({ sheet: sheetName, row: r + 1, link, ...status });
       }
     }
   }
 
-  // 3️⃣ Walidacja — brak powtórzeń
-  if (foundLinks.length === 0) {
-    ui.alert('Nie znaleziono', `Nie znaleziono elementu "${elementName}" w arkuszach.`, ui.ButtonSet.OK);
+  if (foundLinks.length === 0) return ui.alert(`Nie znaleziono elementu "${elementName}".`);
+
+  // --- 1️⃣ Sprawdź błędne linki ---
+  const invalidLinks = foundLinks.filter(f => !f.ok);
+  if (invalidLinks.length > 0) {
+    const msg = invalidLinks.map(f => `• ${f.sheet}!B${f.row} → ${f.status}`).join('\n');
+    const response = ui.prompt(
+      'Znaleziono błędne linki',
+      `Dla elementu "${elementName}" wykryto błędne linki:\n\n${msg}\n\nPodaj nowy, poprawny link:`,
+      ui.ButtonSet.OK_CANCEL
+    );
+
+    if (response.getSelectedButton() === ui.Button.OK) {
+      const newLink = response.getResponseText().trim();
+      if (newLink) updateLinks(ss, foundLinks, elementName, newLink, ui);
+    }
     return;
   }
 
-  // 4️⃣ Sprawdzenie czy wszystkie linki są takie same
+  // --- 2️⃣ Wszystkie linki poprawne, sprawdź czy są różne ---
   const uniqueLinks = [...new Set(foundLinks.map(f => f.link))];
 
-  if (uniqueLinks.length === 1) {
-    ui.alert('Synchronizacja OK ✅', `Wszystkie wystąpienia elementu "${elementName}" mają ten sam link:\n\n${uniqueLinks[0]}`, ui.ButtonSet.OK);
-    return;
-  }
+  if (uniqueLinks.length > 1) {
+    let msg = `Znaleziono ${uniqueLinks.length} różne linki dla elementu "${elementName}":\n\n`;
+    uniqueLinks.forEach((l, i) => {
+      msg += `${i + 1}. ${l}\n`;
+    });
+    msg += `\nWpisz numer linku, który chcesz zachować (lub wklej nowy link):`;
 
-  // 5️⃣ Występują różne linki → pokaż listę i zapytaj, który ma być prawidłowy
-  let msg = `Znaleziono różne linki dla elementu "${elementName}":\n\n`;
-  foundLinks.forEach(f => {
-    msg += `📄 ${f.sheet}!B${f.row}\n→ ${f.link}\n\n`;
-  });
-  msg += `Wpisz dokładnie numer opcji (1–${uniqueLinks.length}) z poniższej listy, który ma być ustawiony jako prawidłowy:\n\n`;
-  uniqueLinks.forEach((l, i) => {
-    msg += `${i + 1}. ${l}\n`;
-  });
+    const response = ui.prompt('Różne linki wykryte', msg, ui.ButtonSet.OK_CANCEL);
+    if (response.getSelectedButton() === ui.Button.OK) {
+      const userInput = response.getResponseText().trim();
+      let selectedLink = null;
 
-  const resp2 = ui.prompt('Wybierz link do synchronizacji', msg, ui.ButtonSet.OK_CANCEL);
-  if (resp2.getSelectedButton() !== ui.Button.OK) return;
-  const chosenIdx = parseInt(resp2.getResponseText().trim());
-  if (isNaN(chosenIdx) || chosenIdx < 1 || chosenIdx > uniqueLinks.length) {
-    ui.alert('Nieprawidłowy wybór.', ui.ButtonSet.OK);
-    return;
-  }
+      // Jeśli wpisano numer
+      if (/^\d+$/.test(userInput)) {
+        const idx = parseInt(userInput, 10) - 1;
+        selectedLink = uniqueLinks[idx];
+      } else {
+        // Jeśli wklejono link
+        selectedLink = userInput;
+      }
 
-  const correctLink = uniqueLinks[chosenIdx - 1];
-
-  // 6️⃣ Podmień wszystkie linki na wybrany
-  let updated = 0;
-  for (const sheetName of sheetsToCheck) {
-    const sheet = ss.getSheetByName(sheetName);
-    if (!sheet) continue;
-
-    const range = sheet.getDataRange();
-    const values = range.getValues();
-
-    for (let r = 0; r < values.length; r++) {
-      const cellVal = String(values[r][1]).trim();
-      if (cellVal === elementName) {
-        const richText = SpreadsheetApp.newRichTextValue()
-          .setText(cellVal)
-          .setLinkUrl(correctLink)
-          .build();
-        sheet.getRange(r + 1, 2).setRichTextValue(richText);
-        updated++;
+      if (selectedLink) {
+        updateLinks(ss, foundLinks, elementName, selectedLink, ui);
       }
     }
+  } else {
+    ui.alert(`✅ Wszystkie linki dla "${elementName}" są poprawne i jednakowe.`);
+  }
+}
+
+// --- Pomocnicza funkcja do aktualizacji linków ---
+function updateLinks(ss, foundLinks, elementName, newLink, ui) {
+  let updatedCount = 0;
+
+  for (const f of foundLinks) {
+    const sheet = ss.getSheetByName(f.sheet);
+    if (!sheet) continue;
+    const cell = sheet.getRange(f.row, 2);
+    const text = cell.getDisplayValue() || elementName;
+    const newRich = SpreadsheetApp.newRichTextValue()
+      .setText(text)
+      .setLinkUrl(newLink)
+      .build();
+    cell.setRichTextValue(newRich);
+    updatedCount++;
   }
 
-  ui.alert('Synchronizacja zakończona 🔁', `Ujednolicono ${updated} komórek dla elementu "${elementName}".\nUstawiony link:\n${correctLink}`, ui.ButtonSet.OK);
+  ui.alert(`✅ Zaktualizowano ${updatedCount} linków dla "${elementName}".`);
 }
+
+
 
 function promptAndDownloadWithColors() {
   const ui = SpreadsheetApp.getUi();
@@ -998,6 +1025,27 @@ function collectElementTotals(name, multiplier, modulesMap, zestawyMap, totals, 
   // to element końcowy — sumujemy
   const add = Number(multiplier) || 1;
   totals[name] = (totals[name] || 0) + add;
+}
+
+function checkDriveLinkStatus(link) {
+  if (!link || link === '(brak linku)') return { ok: false, code: 0, status: 'Brak linku' };
+
+  const fileIdMatch = link.match(/[-\w]{25,}/);
+  if (!fileIdMatch) return { ok: false, code: 0, status: 'Nieprawidłowy format linku' };
+
+  const fileId = fileIdMatch[0];
+  try {
+    const file = DriveApp.getFileById(fileId);
+    if (!file) return { ok: false, code: 404, status: 'Nie znaleziono pliku' };
+    // Jeśli udało się pobrać nazwę, to plik istnieje
+    const name = file.getName();
+    return { ok: true, code: 200, status: 'OK', name };
+  } catch (e) {
+    // Tu złapiemy przypadki 403, 404 itd.
+    if (String(e).includes('File not found')) return { ok: false, code: 404, status: 'Nie znaleziono pliku' };
+    if (String(e).includes('User does not have permission')) return { ok: false, code: 403, status: 'Brak dostępu' };
+    return { ok: false, code: 500, status: 'Błąd: ' + e.message };
+  }
 }
 
 
