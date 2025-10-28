@@ -91,9 +91,16 @@ function promptAndCompareLinks() {
 
   if (foundLinks.length === 0) return ui.alert(`Nie znaleziono elementu "${elementName}".`);
 
-  // --- 1️⃣ Sprawdź błędne linki ---
+    // --- 1️⃣ Sprawdź błędne linki ---
+  const validLinks = foundLinks.filter(f => f.ok);
   const invalidLinks = foundLinks.filter(f => !f.ok);
-  if (invalidLinks.length > 0) {
+
+  // Jeśli są tylko "braki linków", ale przynajmniej jeden link poprawny – traktuj jak różne linki
+  const hasValid = validLinks.length > 0;
+  const onlyMissing = invalidLinks.every(f => f.status === 'Brak linku');
+
+  if (invalidLinks.length > 0 && !(hasValid && onlyMissing)) {
+    // czyli: występują błędy inne niż "brak linku" (np. 404/403)
     const msg = invalidLinks.map(f => `• ${f.sheet}!B${f.row} → ${f.status}`).join('\n');
     const response = ui.prompt(
       'Znaleziono błędne linki',
@@ -108,27 +115,32 @@ function promptAndCompareLinks() {
     return;
   }
 
-  // --- 2️⃣ Wszystkie linki poprawne, sprawdź czy są różne ---
-  const uniqueLinks = [...new Set(foundLinks.map(f => f.link))];
+  // --- 2️⃣ Wszystkie linki poprawne LUB brak linku w części z nich ---
+  const allLinks = foundLinks.map(f => f.link).filter(l => l && l !== '(brak linku)');
+  const uniqueLinks = [...new Set(allLinks)];
 
-  if (uniqueLinks.length > 1) {
-    let msg = `Znaleziono ${uniqueLinks.length} różne linki dla elementu "${elementName}":\n\n`;
+  if (uniqueLinks.length === 0) {
+    ui.alert(`❌ Brak jakichkolwiek linków dla "${elementName}".`);
+    return;
+  }
+
+  if (uniqueLinks.length > 1 || (hasValid && onlyMissing)) {
+    // Występują różne linki lub część komórek nie ma linku – zapytaj użytkownika, który zachować
+    let msg = `Znaleziono ${uniqueLinks.length} różne linki (lub brak w niektórych miejscach) dla "${elementName}":\n\n`;
     uniqueLinks.forEach((l, i) => {
       msg += `${i + 1}. ${l}\n`;
     });
     msg += `\nWpisz numer linku, który chcesz zachować (lub wklej nowy link):`;
 
-    const response = ui.prompt('Różne linki wykryte', msg, ui.ButtonSet.OK_CANCEL);
+    const response = ui.prompt('Różne lub brakujące linki', msg, ui.ButtonSet.OK_CANCEL);
     if (response.getSelectedButton() === ui.Button.OK) {
       const userInput = response.getResponseText().trim();
       let selectedLink = null;
 
-      // Jeśli wpisano numer
       if (/^\d+$/.test(userInput)) {
         const idx = parseInt(userInput, 10) - 1;
         selectedLink = uniqueLinks[idx];
       } else {
-        // Jeśli wklejono link
         selectedLink = userInput;
       }
 
@@ -139,6 +151,7 @@ function promptAndCompareLinks() {
   } else {
     ui.alert(`✅ Wszystkie linki dla "${elementName}" są poprawne i jednakowe.`);
   }
+
 }
 
 // --- Pomocnicza funkcja do aktualizacji linków ---
