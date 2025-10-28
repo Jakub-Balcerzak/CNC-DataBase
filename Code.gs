@@ -30,6 +30,7 @@ function onOpen() {
   ui.createMenu('Sync')
     .addItem('Ustaw / edytuj link dla elementu...', 'promptAndSyncLink')
     .addItem('Porównaj linki (SyncLinks)', 'promptAndCompareLinks')
+     .addItem('Masowe sprawdzenie linków', 'massCheckAndFixLinks')
     .addToUi();
 }
 
@@ -1046,6 +1047,184 @@ function checkDriveLinkStatus(link) {
     if (String(e).includes('User does not have permission')) return { ok: false, code: 403, status: 'Brak dostępu' };
     return { ok: false, code: 500, status: 'Błąd: ' + e.message };
   }
+}
+
+/**
+ * Masowe sprawdzanie wszystkich elementów w arkuszach
+ * Działa jak Porównaj linki (SyncLinks), ale dla wszystkich elementów
+ * Pomija 1. wiersz (nagłówki)
+ */
+function massCheckAndFixLinks() {
+  const ui = SpreadsheetApp.getUi();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheetsToCheck = ['Zestawy CNC', 'Moduły CNC', 'Elementy CNC'];
+  const allElements = new Set();
+
+  // 🔹 Zbierz wszystkie unikalne elementy z kolumny B, pomijając nagłówki
+  for (const sheetName of sheetsToCheck) {
+    const sheet = ss.getSheetByName(sheetName);
+    if (!sheet) continue;
+    const range = sheet.getDataRange();
+    const values = range.getValues();
+    for (let r = 1; r < values.length; r++) { // <== pomijamy nagłówek
+      const el = String(values[r][1]).trim();
+      if (el) allElements.add(el);
+    }
+  }
+
+  if (allElements.size === 0) {
+    ui.alert('Brak elementów do sprawdzenia.');
+    return;
+  }
+
+  ui.alert(`🔍 Rozpoczynam sprawdzanie ${allElements.size} elementów.\nKliknij OK, aby rozpocząć.`);
+
+  let checked = 0;
+  let fixed = 0;
+  let skipped = 0;
+
+  // 🔹 Sprawdzaj każdy element po kolei – interaktywnie
+  for (const elementName of allElements) {
+    const result = compareAndFixElementLinks(elementName, ss, ui);
+    if (result === 'fixed') fixed++;
+    if (result === 'skipped') skipped++;
+    checked++;
+  }
+
+  ui.alert(`✅ Zakończono sprawdzanie.\nSprawdzono: ${checked}\nPoprawiono: ${fixed}\nPominięto: ${skipped}`);
+}
+
+/**
+ * Pomocnicza wersja promptAndCompareLinks() działająca dla jednego elementu
+ * Zwraca: 'fixed' | 'skipped' | 'ok'
+ */
+function compareAndFixElementLinks(elementName, ss, ui) {
+  const sheetsToCheck = ['Zestawy CNC', 'Moduły CNC', 'Elementy CNC'];
+  const foundLinks = [];
+
+  function checkDriveLinkStatus(link) {
+    if (!link || link === '(brak linku)') return { ok: false, status: 'Brak linku' };
+    const match = link.match(/[-\w]{25,}/);
+    if (!match) return { ok: false, status: 'Nieprawidłowy format linku' };
+    const fileId = match[0];
+    try {
+      DriveApp.getFileById(fileId).getName();
+      return { ok: true, status: 'OK' };
+    } catch (e) {
+      const msg = String(e);
+      if (msg.includes('File not found')) return { ok: false, status: 'Nie znaleziono pliku' };
+      if (msg.includes('User does not have permission')) return { ok: false, status: 'Brak dostępu' };
+      return { ok: false, status: 'Błąd: ' + e.message };
+    }
+  }
+
+  // 🔍 Zbierz linki z arkuszy
+  for (const sheetName of sheetsToCheck) {
+    const sheet = ss.getSheetByName(sheetName);
+    if (!sheet) continue;
+    const range = sheet.getDataRange();
+    const values = range.getValues();
+    const rich = range.getRichTextValues();
+
+    for (let r = 1; r < values.length; r++) { // pomijamy nagłówek
+      const name = String(values[r][1]).trim();
+      if (name === elementName) {
+        let link = rich[r][1]?.getLinkUrl() || '(brak linku)';
+        const status = checkDriveLinkStatus(link);
+        foundLinks.push({ sheet: sheetName, row: r + 1, link, ...status });
+      }
+    }
+  }
+
+  if (foundLinks.length === 0) return 'skipped';
+
+  const invalid = foundLinks.filter(f => !f.ok);
+  const uniqueLinks = [...new Set(foundLinks.map(f => f.link))];
+
+  // ❌ Błędne linki
+  if (invalid.length > 0) {
+    const msg = invalid.map(f => `• ${f.sheet}!B${f.row} → ${f.status}`).join('\n');
+    const resp = ui.prompt(`Błędne linki dla "${elementName}"`, `${msg}\n\nPodaj nowy link:`, ui.ButtonSet.OK_CANCEL);
+    if (resp.getSelectedButton() !== ui.Button.OK) return 'skipped';
+    const newLink = resp.getResponseText().trim();
+    if (!newLink) return 'skipped';
+    updateLinks(ss, foundLinks, elementName, newLink, ui);
+    return 'fixed';
+  }
+
+  // ⚠️ Różne linki
+  if (uniqueLinks.length > 1) {
+    let msg = `Znaleziono ${uniqueLinks.length} różne linki dla "${elementName}":\n\n`;
+    uniqueLinks.forEach((l, i) => (msg += `${i + 1}. ${l}\n`));
+    msg += `\nWpisz numer linku, który chcesz zachować (lub wklej nowy):`;
+    const resp = ui.prompt('Różne linki', msg, ui.ButtonSet.OK_CANCEL);
+    if (resp.getSelectedButton() !== ui.Button.OK) return 'skipped';
+    const inp = resp.getResponseText().trim();
+    const idx = /^\d+$/.test(inp) ? parseInt(inp, 10) - 1 : null;
+    const selectedLink = idx != null ? uniqueLinks[idx] : inp;
+    if (selectedLink) {
+      updateLinks(ss, foundLinks, elementName, selectedLink, ui);
+      return 'fixed';
+    }
+    return 'skipped';
+  }
+
+  return 'ok';
+}
+
+
+// --- Obsługa pojedynczego elementu ---
+function handleSingleElement(el, ui, ss) {
+  if (el.invalidLinks.length > 0) {
+    const msg = el.invalidLinks.map(f => `• ${f.sheet}!B${f.row} → ${f.status}`).join('\n');
+    const response = ui.prompt(
+      'Znaleziono błędne linki',
+      `Dla elementu "${el.name}" wykryto błędne linki:\n\n${msg}\n\nPodaj nowy, poprawny link:`,
+      ui.ButtonSet.OK_CANCEL
+    );
+    if (response.getSelectedButton() === ui.Button.OK) {
+      const newLink = response.getResponseText().trim();
+      if (newLink) updateLinks(ss, el.linksArr, el.name, newLink, ui);
+    }
+  } else if (el.uniqueLinks.length > 1) {
+    let msg = `Znaleziono ${el.uniqueLinks.length} różne linki dla elementu "${el.name}":\n\n`;
+    el.uniqueLinks.forEach((l, i) => {
+      msg += `${i + 1}. ${l}\n`;
+    });
+    msg += `\nWpisz numer linku, który chcesz zachować (lub wklej nowy link):`;
+    const response = ui.prompt('Różne linki wykryte', msg, ui.ButtonSet.OK_CANCEL);
+    if (response.getSelectedButton() === ui.Button.OK) {
+      const userInput = response.getResponseText().trim();
+      let selectedLink = null;
+      if (/^\d+$/.test(userInput)) {
+        const idx = parseInt(userInput, 10) - 1;
+        selectedLink = el.uniqueLinks[idx];
+      } else {
+        selectedLink = userInput;
+      }
+      if (selectedLink) updateLinks(ss, el.linksArr, el.name, selectedLink, ui);
+    }
+  }
+}
+
+// --- Pomocnicza funkcja do aktualizacji linków ---
+function updateLinks(ss, foundLinks, elementName, newLink, ui) {
+  let updatedCount = 0;
+
+  for (const f of foundLinks) {
+    const sheet = ss.getSheetByName(f.sheet);
+    if (!sheet) continue;
+    const cell = sheet.getRange(f.row, 2);
+    const text = cell.getDisplayValue() || elementName;
+    const newRich = SpreadsheetApp.newRichTextValue()
+      .setText(text)
+      .setLinkUrl(newLink)
+      .build();
+    cell.setRichTextValue(newRich);
+    updatedCount++;
+  }
+
+  ui.alert(`✅ Zaktualizowano ${updatedCount} linków dla "${elementName}".`);
 }
 
 
