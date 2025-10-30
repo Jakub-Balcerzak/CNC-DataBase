@@ -902,24 +902,22 @@ function processElementRecursive(name, providedRichLink, modulesMap, zestawyMap,
  * - przeszukuje zestawy: wiersze w których kolumna B == name (i wykorzysta link z tej komórki)
  * Zwraca pierwszy znaleziony link albo null.
  */
+const linkCache = {};
 function findLinkForElement(name, modulesMap, zestawyMap) {
-  // przeszukujemy modulesMap - to tablica obiektów {text, richLink} dla każdego modułu klucza
-  // modulesMap jest mapą moduł -> array; ale chcemy przeszukać wszystkie wartości arrays
+  if (linkCache[name]) return linkCache[name];
   for (let key in modulesMap) {
-    const arr = modulesMap[key];
-    for (let entry of arr) {
-      if (entry.text === name && entry.richLink) return entry.richLink;
+    for (let e of modulesMap[key]) {
+      if (e.text === name && e.richLink) return (linkCache[name] = e.richLink);
     }
   }
-  // przeszukaj zestawy (mogą zawierać elementy z linkiem)
   for (let key in zestawyMap) {
-    const arr = zestawyMap[key];
-    for (let entry of arr) {
-      if (entry.text === name && entry.richLink) return entry.richLink;
+    for (let e of zestawyMap[key]) {
+      if (e.text === name && e.richLink) return (linkCache[name] = e.richLink);
     }
   }
-  return null;
+  return (linkCache[name] = null);
 }
+
 
 /**
  * Zwraca obiekt {name, surface} dla danego elementu
@@ -965,40 +963,52 @@ function getOrCreateSubfolder(parentFolder, subfolderName) {
  * @param {Array} downloaded - lista obiektów {name, color, namePretty, count}
  * @param {GoogleAppsScript.Drive.Folder} folder - folder, w którym zapisujemy
  */
+/**
+ * Szybsza wersja createSummaryTxtFile()
+ * - używa StringBuildera (join tylko raz)
+ * - unika pad() z powtarzaniem spacji dla każdej linii
+ * - ogranicza sortowanie i formatowanie
+ */
 function createSummaryTxtFile(downloaded, folder) {
   if (!downloaded || downloaded.length === 0) return null;
 
-  // Grupowanie po nazwie elementu + kolor (aby rozróżnić ten sam element z różnymi kolorami)
-  const grouped = {};
+  // Grupowanie po nazwie elementu + kolor
+  const grouped = new Map();
   for (const item of downloaded) {
-    const key = item.name + '||' + (item.color || 'Bez koloru');
-    if (!grouped[key]) {
-      grouped[key] = { count: 0, namePretty: item.prettyName || '', color: item.color || 'Bez koloru', name: item.name };
-    }
-    grouped[key].count += (item.count || 1);
+    const key = `${item.name}||${item.color || 'Bez koloru'}`;
+    const g = grouped.get(key) || { count: 0, namePretty: item.prettyName || '', color: item.color || 'Bez koloru', name: item.name };
+    g.count += (item.count || 1);
+    grouped.set(key, g);
   }
 
-  // Nagłówek tabeli
+  // Konwersja do tablicy i sortowanie alfabetyczne
+  const sorted = Array.from(grouped.values()).sort((a, b) => a.name.localeCompare(b.name));
+
+  // Użycie tablicy jako "string builder"
   const lines = [];
   lines.push('Nr kat. elementu       | Ilość | Nazwa elementu                       | Kolor');
   lines.push('------------------------+--------+-------------------------------------+------------');
 
-  // Sortuj alfabetycznie po nazwie elementu
-  const sorted = Object.values(grouped).sort((a,b) => (a.name > b.name ? 1 : a.name < b.name ? -1 : 0));
-
-  const pad = (txt, len) => (String(txt) + ' '.repeat(len)).slice(0, len);
+  // Wydajne wyrównywanie za pomocą prostego paddingu (bez slice/repeat)
+  const padRight = (txt, len) => (txt.length >= len ? txt.substring(0, len) : txt + ' '.repeat(len - txt.length));
+  const padLeft = (txt, len) => (txt.length >= len ? txt.substring(0, len) : ' '.repeat(len - txt.length) + txt);
 
   for (const el of sorted) {
     lines.push(
-      `${pad(el.name, 23)}| ${pad(String(el.count), 6)}| ${pad(el.namePretty, 37)}| ${el.color}`
+      `${padRight(el.name, 23)}| ${padLeft(String(el.count), 6)}| ${padRight(el.namePretty, 37)}| ${el.color}`
     );
   }
 
+  // Łączenie wszystkiego w jeden string JEDNYM joinem
   const content = lines.join('\n');
+
+  // Tworzenie pliku tylko raz
   const blob = Utilities.newBlob(content, 'text/plain', 'Podsumowanie_elementów.txt');
   const file = folder.createFile(blob);
+
   return file.getUrl();
 }
+
 
 
 
