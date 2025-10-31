@@ -4,6 +4,7 @@ function onOpen() {
     .addItem('Pobierz pliki dla zestawu (z kolorami)...', 'promptAndDownloadWithColors')
     .addItem('Pobierz pliki dla modułu...', 'promptAndDownloadModule')
     .addItem('Pobierz listę elementów dla zestawu...', 'promptAndCreateElementList')
+    .addItem('Pobierz listę elementów dla modułu...', 'promptAndCreateElementListModule')
     .addToUi();
 
   ui.createMenu('Sync')
@@ -58,6 +59,22 @@ function promptAndCreateElementList() {
   }
   try {
     createElementListForSet(setId);
+  } catch (e) {
+    ui.alert('Błąd', 'Wystąpił błąd: ' + e.message, ui.ButtonSet.OK);
+  }
+}
+
+function promptAndCreateElementListModule() {
+  const ui = SpreadsheetApp.getUi();
+  const resp = ui.prompt('Pobierz listę elementów (moduł)', 'Podaj numer modułu (np. M1594):', ui.ButtonSet.OK_CANCEL);
+  if (resp.getSelectedButton() !== ui.Button.OK) return;
+  const modId = resp.getResponseText().trim();
+  if (!modId) {
+    ui.alert('Nie podano numeru modułu.');
+    return;
+  }
+  try {
+    createElementListForModule(modId);
   } catch (e) {
     ui.alert('Błąd', 'Wystąpił błąd: ' + e.message, ui.ButtonSet.OK);
   }

@@ -127,6 +127,65 @@ Plik: ${fileUrl}`, ui.ButtonSet.OK);
   }
 }
 
+/**
+ * Tworzy plik TXT z listą elementów dla modułu (używa arkusza 'Moduły CNC').
+ */
+function createElementListForModule(modId) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+
+  const sheetZest = ss.getSheetByName(SHEET_ZESTAWY);
+  const sheetMod = ss.getSheetByName(SHEET_MODULE);
+  if (!sheetZest || !sheetMod) {
+    ui.alert('Błąd', `Brakuje wymaganych arkuszy: "${SHEET_ZESTAWY}" lub "${SHEET_MODULE}".`, ui.ButtonSet.OK);
+    return;
+  }
+
+  const zestValues = sheetZest.getDataRange().getValues();
+  const zestRich = sheetZest.getDataRange().getRichTextValues();
+  const modValues = sheetMod.getDataRange().getValues();
+  const modRich = sheetMod.getDataRange().getRichTextValues();
+
+  const zestawyMap = buildMapForSheet(zestValues, zestRich, 0, 1, SHEET_ZESTAWY).map;
+  const modulesMap = buildMapForSheet(modValues, modRich, 0, 1, SHEET_MODULE).map;
+
+  const startElements = modulesMap[modId];
+  if (!startElements || startElements.length === 0) {
+    ui.alert('Nie znaleziono modułu', `Nie znaleziono wierszy o Nr modułu = "${modId}" w arkuszu "${SHEET_MODULE}".`, ui.ButtonSet.OK);
+    return;
+  }
+
+  const totals = {};
+  const pathVisited = {};
+  // startElements are children of the module; use each child's count
+  for (const e of startElements) {
+    const count = (e && typeof e.count === 'number' && !isNaN(e.count) && e.count > 0) ? e.count : 1;
+    collectElementTotals(e.text, count, modulesMap, zestawyMap, totals, pathVisited);
+  }
+
+  const downloaded = [];
+  for (const name of Object.keys(totals).sort()) {
+    const data = findElementData(name, modulesMap, zestawyMap) || {};
+    downloaded.push({ name: name, count: totals[name], prettyName: data.name || '', color: 'Bez koloru' });
+  }
+
+  if (downloaded.length === 0) {
+    ui.alert('Brak elementów', `Moduł ${modId} nie zawiera elementów do listy.`);
+    return;
+  }
+
+  const folderName = `Rejestr Plików CNC - Lista moduł ${modId} - ${timestampForName()}`;
+  const folder = DriveApp.createFolder(folderName);
+  const filename = `Lista_modul_${modId}_${timestampForName()}.txt`;
+  const fileUrl = createSummaryTxtFile(downloaded, folder, filename);
+  if (fileUrl) {
+    ui.alert('Gotowe', `Utworzono listę elementów dla modułu ${modId}.
+Plik: ${fileUrl}`, ui.ButtonSet.OK);
+  } else {
+    ui.alert('Błąd', 'Nie udało się utworzyć pliku z listą elementów.', ui.ButtonSet.OK);
+  }
+}
+
 function downloadModuleFiles(modId) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const ui = SpreadsheetApp.getUi();
