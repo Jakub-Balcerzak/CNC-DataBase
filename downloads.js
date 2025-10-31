@@ -25,18 +25,29 @@ function downloadSetFilesWithColors(setId) {
     return;
   }
 
+  // Zbierz listę unikalnych elementów (rozwiń moduły rekurencyjnie)
   const elements = [];
+  const seen = new Set();
   const collect = (list) => {
     for (const e of list) {
-      const n = e.text.trim();
-      if (!isModuleName(n)) {
-        if (!elements.find(el => el.text === n)) elements.push(e);
+      if (!e || !e.text) continue;
+      const name = String(e.text).trim();
+      if (!name) continue;
+
+      if (isModuleName(name)) {
+        const children = modulesMap[name] || [];
+        collect(children);
       } else {
-        const sub = modulesMap[n];
-        if (sub && sub.length) collect(sub);
+        if (!seen.has(name)) {
+          seen.add(name);
+          const data = findElementData(name, modulesMap, zestawyMap) || {};
+          const rich = e.richLink || findLinkForElement(name, modulesMap, zestawyMap);
+          elements.push({ text: name, name: data.name || '', richLink: rich });
+        }
       }
     }
   };
+
   collect(startElements);
 
   if (elements.length === 0) {
@@ -56,7 +67,10 @@ function downloadSetFilesWithColors(setId) {
   SpreadsheetApp.getUi().showModalDialog(htmlOutput, `Kolory dla ${setId}`);
 }
 
-function downloadSetFiles(setId) {
+/**
+ * Tworzy plik TXT z listą elementów (ilości) dla podanego zestawu i zapisuje go w nowym folderze na Dysku.
+ */
+function createElementListForSet(setId) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const ui = SpreadsheetApp.getUi();
 
@@ -75,66 +89,42 @@ function downloadSetFiles(setId) {
   const zestawyMap = buildMapForSheet(zestValues, zestRich, 0, 1, SHEET_ZESTAWY).map;
   const modulesMap = buildMapForSheet(modValues, modRich, 0, 1, SHEET_MODULE).map;
 
-  const dataWarnings = [];
-  for (let r = 0; r < zestValues.length; r++) {
-    const rowSet = String(zestValues[r][0]).trim();
-    const rowElement = String(zestValues[r][1]).trim();
-    if (rowSet === setId && !rowElement) {
-      const rowNumber = r + 1;
-      const colLetter = 'B';
-      dataWarnings.push(`Brak numeru elementu w arkuszu "${SHEET_ZESTAWY}" dla zestawu "${setId}" w komórce ${colLetter}${rowNumber}`);
-    }
-  }
-
   const startElements = zestawyMap[setId];
   if (!startElements || startElements.length === 0) {
     ui.alert('Nie znaleziono zestawu', `Nie znaleziono wierszy o Nr zestawu = "${setId}" w arkuszu "${SHEET_ZESTAWY}".`, ui.ButtonSet.OK);
     return;
   }
 
-  const folderName = `Rejestr Plików CNC - Pobrania ${timestampForName()}`;
-  const folder = DriveApp.createFolder(folderName);
-  const folderUrl = folder.getUrl();
+  const totals = {};
+  const pathVisited = {};
+  for (const e of startElements) {
+    const count = (e && typeof e.count === 'number' && !isNaN(e.count) && e.count > 0) ? e.count : 1;
+    collectElementTotals(e.text, count, modulesMap, zestawyMap, totals, pathVisited);
+  }
 
-  const visited = {};
-  const missingLinks = [];
   const downloaded = [];
-  const errors = [];
-
-  for (let e of startElements) {
-    processElementRecursive(e.text, e.richLink, modulesMap, zestawyMap, visited, folder, downloaded, missingLinks, errors);
+  for (const name of Object.keys(totals).sort()) {
+    const data = findElementData(name, modulesMap, zestawyMap) || {};
+    downloaded.push({ name: name, count: totals[name], prettyName: data.name || '', color: 'Bez koloru' });
   }
 
-  const summaryLines = [];
-  summaryLines.push(`📁 Utworzony folder:`);
-  summaryLines.push(folderUrl);
-  summaryLines.push('');
-  summaryLines.push(`Pobrano plików: ${downloaded.length}`);
-  if (downloaded.length) {
-    downloaded.slice(0, 20).forEach(d => {
-      const surfaceStr = d.surface ? ` (${d.surface.toFixed(3)} m²)` : '';
-      const pretty = d.prettyName ? ` – ${d.prettyName}` : '';
-      summaryLines.push(`• ${d.name}${pretty}${surfaceStr}`);
-    });
-    if (downloaded.length > 20) summaryLines.push(`... + ${downloaded.length - 20} innych`);
-  }
-  if (missingLinks.length) {
-    summaryLines.push('');
-    summaryLines.push(`Elementy bez hiperłącza (${missingLinks.length}):`);
-    missingLinks.forEach(m => summaryLines.push(`• ${m}`));
-  }
-  if (errors.length) {
-    summaryLines.push('');
-    summaryLines.push(`Błędy (${errors.length}):`);
-    errors.forEach(err => summaryLines.push(`• ${err}`));
-  }
-  if (dataWarnings.length) {
-    summaryLines.push('');
-    summaryLines.push(`⚠️ Ostrzeżenia dotyczące danych (${dataWarnings.length}):`);
-    dataWarnings.forEach(w => summaryLines.push(`• ${w}`));
+  if (downloaded.length === 0) {
+    ui.alert('Brak elementów', `Zestaw ${setId} nie zawiera elementów do listy.`);
+    return;
   }
 
-  ui.alert('Pobieranie zakończone', summaryLines.join('\n'), ui.ButtonSet.OK);
+  const folderName = `Rejestr Plików CNC - Lista ${setId} - ${timestampForName()}`;
+  const folder = DriveApp.createFolder(folderName);
+
+  // createSummaryTxtFile (in helpers.js) expects (downloaded, folder, filename?)
+  const filename = `Lista_${setId}_${timestampForName()}.txt`;
+  const fileUrl = createSummaryTxtFile(downloaded, folder, filename);
+  if (fileUrl) {
+    ui.alert('Gotowe', `Utworzono listę elementów dla zestawu ${setId}.
+Plik: ${fileUrl}`, ui.ButtonSet.OK);
+  } else {
+    ui.alert('Błąd', 'Nie udało się utworzyć pliku z listą elementów.', ui.ButtonSet.OK);
+  }
 }
 
 function downloadModuleFiles(modId) {
@@ -408,7 +398,7 @@ function startDownloadWithColors(colorMap, setId) {
     return;
   }
 
-  const folderName = `Rejestr Plików CNC - Pobrania ${timestampForName()}`;
+  const folderName = `Rejestr Plików CNC - Pobrania ${setId} - ${timestampForName()}`;
   const folder = DriveApp.createFolder(folderName);
   const folderUrl = folder.getUrl();
 
@@ -463,13 +453,6 @@ function startDownloadWithColors(colorMap, setId) {
     summary.push('⚠️ Błędy:');
     errors.forEach(e => summary.push('• ' + e));
   }
-
-  const summaryFileUrl = createSummaryTxtFile(downloaded, folder);
-  if (summaryFileUrl) {
-    summary.push('');
-    summary.push('📄 Utworzono plik podsumowania:');
-    summary.push(summaryFileUrl);
-  }
-
+  // Note: Summary TXT creation is handled by a separate action/menu.
   ui.alert('Zakończono', summary.join('\n'), ui.ButtonSet.OK);
 }

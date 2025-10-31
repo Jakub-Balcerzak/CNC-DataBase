@@ -34,11 +34,7 @@ function promptAndDownload() {
     ui.alert('Nie podano numeru zestawu.');
     return;
   }
-  try {
-    downloadSetFiles(setId);
-  } catch (e) {
-    ui.alert('Błąd', 'Wystąpił błąd: ' + e.message, ui.ButtonSet.OK);
-  }
+  // Deprecated: single-set download removed. Use the color flow and leave colors unset.
 }
 
 function promptAndDownloadModule() {
@@ -119,93 +115,7 @@ function downloadSetFilesWithColors(setId) {
 }
 
 
-function downloadSetFiles(setId) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const ui = SpreadsheetApp.getUi();
-
-  // Pobierz dane z arkuszy (values i rich text dla kolumn z linkami)
-  const sheetZest = ss.getSheetByName(SHEET_ZESTAWY);
-  const sheetMod = ss.getSheetByName(SHEET_MODULE);
-  if (!sheetZest || !sheetMod) {
-    ui.alert('Błąd', `Brakuje wymaganych arkuszy: "${SHEET_ZESTAWY}" lub "${SHEET_MODULE}".`, ui.ButtonSet.OK);
-    return;
-  }
-
-  const zestValues = sheetZest.getDataRange().getValues(); // pełne wiersze
-  const zestRich = sheetZest.getDataRange().getRichTextValues();
-  const modValues = sheetMod.getDataRange().getValues();
-  const modRich = sheetMod.getDataRange().getRichTextValues();
-
-  // Tworzymy mapy (bez sprawdzania pustych wierszy)
-const zestawyMap = buildMapForSheet(zestValues, zestRich, 0, 1, SHEET_ZESTAWY).map;
-const modulesMap = buildMapForSheet(modValues, modRich, 0, 1, SHEET_MODULE).map;
-
-// Ostrzeżenia o pustych komórkach tylko dla bieżącego zestawu
-const dataWarnings = [];
-for (let r = 0; r < zestValues.length; r++) {
-  const rowSet = String(zestValues[r][0]).trim();
-  const rowElement = String(zestValues[r][1]).trim();
-  if (rowSet === setId && !rowElement) {
-    const rowNumber = r + 1;
-    const colLetter = 'B';
-    dataWarnings.push(`Brak numeru elementu w arkuszu "${SHEET_ZESTAWY}" dla zestawu "${setId}" w komórce ${colLetter}${rowNumber}`);
-  }
-}
-
-  // Sprawdź czy zestaw istnieje
-  const startElements = zestawyMap[setId];
-  if (!startElements || startElements.length === 0) {
-    ui.alert('Nie znaleziono zestawu', `Nie znaleziono wierszy o Nr zestawu = "${setId}" w arkuszu "${SHEET_ZESTAWY}".`, ui.ButtonSet.OK);
-    return;
-  }
-
-  // Utwórz folder docelowy na Dysku
-  const folderName = `Rejestr Plików CNC - Pobrania ${timestampForName()}`;
-  const folder = DriveApp.createFolder(folderName);
-  const folderUrl = folder.getUrl(); // <-- LINK DO FOLDERU
-
-  // Rekurencyjne przetwarzanie
-  const visited = {};
-  const missingLinks = [];
-  const downloaded = [];
-  const errors = [];
-
-  for (let e of startElements) {
-    processElementRecursive(e.text, e.richLink, modulesMap, zestawyMap, visited, folder, downloaded, missingLinks, errors);
-  }
-
-  // Podsumowanie
-  const summaryLines = [];
-  summaryLines.push(`📁 Utworzony folder:`);
-  summaryLines.push(folderUrl);
-  summaryLines.push('');
-  summaryLines.push(`Pobrano plików: ${downloaded.length}`);
-  if (downloaded.length) {
-    downloaded.slice(0, 20).forEach(d => {
-  const surfaceStr = d.surface ? ` (${d.surface.toFixed(3)} m²)` : '';
-  const pretty = d.prettyName ? ` – ${d.prettyName}` : '';
-  summaryLines.push(`• ${d.name}${pretty}${surfaceStr}`);
-});
-    if (downloaded.length > 20) summaryLines.push(`... + ${downloaded.length - 20} innych`);
-  }
-  if (missingLinks.length) {
-    summaryLines.push('');
-    summaryLines.push(`Elementy bez hiperłącza (${missingLinks.length}):`);
-    missingLinks.forEach(m => summaryLines.push(`• ${m}`));
-  }
-  if (errors.length) {
-    summaryLines.push('');
-    summaryLines.push(`Błędy (${errors.length}):`);
-    errors.forEach(err => summaryLines.push(`• ${err}`));
-  }
-  if (dataWarnings.length) {
-  summaryLines.push('');
-  summaryLines.push(`⚠️ Ostrzeżenia dotyczące danych (${dataWarnings.length}):`);
-  dataWarnings.forEach(w => summaryLines.push(`• ${w}`));
-}
-
-  ui.alert('Pobieranie zakończone', summaryLines.join('\n'), ui.ButtonSet.OK);
-}
+// downloadSetFiles removed — use downloadSetFilesWithColors instead (leave colors unset to download without grouping).
 
 function downloadModuleFiles(modId) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -561,8 +471,8 @@ function startDownloadWithColors(colorMap, setId) {
     return;
   }
 
-  // 2) Utwórz folder docelowy
-  const folderName = `Rejestr Plików CNC - Pobrania ${timestampForName()}`;
+  // 2) Utwórz folder docelowy (z nazwą zestawu)
+  const folderName = `Rejestr Plików CNC - Pobrania ${setId} - ${timestampForName()}`;
   const folder = DriveApp.createFolder(folderName);
   const folderUrl = folder.getUrl();
 
@@ -626,13 +536,7 @@ function startDownloadWithColors(colorMap, setId) {
     errors.forEach(e => summary.push('• ' + e));
   }
 
-  const summaryFileUrl = createSummaryTxtFile(downloaded, folder);
-  if (summaryFileUrl) {
-    summary.push('');
-    summary.push('📄 Utworzono plik podsumowania:');
-    summary.push(summaryFileUrl);
-  }
-
+  // Note: Summary TXT creation is handled by a separate action/menu.
   ui.alert('Zakończono', summary.join('\n'), ui.ButtonSet.OK);
 }
 
@@ -800,45 +704,7 @@ function getOrCreateSubfolder(parentFolder, subfolderName) {
  * - unika pad() z powtarzaniem spacji dla każdej linii
  * - ogranicza sortowanie i formatowanie
  */
-function createSummaryTxtFile(downloaded, folder) {
-  if (!downloaded || downloaded.length === 0) return null;
-
-  // Grupowanie po nazwie elementu + kolor
-  const grouped = new Map();
-  for (const item of downloaded) {
-    const key = `${item.name}||${item.color || 'Bez koloru'}`;
-    const g = grouped.get(key) || { count: 0, namePretty: item.prettyName || '', color: item.color || 'Bez koloru', name: item.name };
-    g.count += (item.count || 1);
-    grouped.set(key, g);
-  }
-
-  // Konwersja do tablicy i sortowanie alfabetyczne
-  const sorted = Array.from(grouped.values()).sort((a, b) => a.name.localeCompare(b.name));
-
-  // Użycie tablicy jako "string builder"
-  const lines = [];
-  lines.push('Nr kat. elementu       | Ilość | Nazwa elementu                       | Kolor');
-  lines.push('------------------------+--------+-------------------------------------+------------');
-
-  // Wydajne wyrównywanie za pomocą prostego paddingu (bez slice/repeat)
-  const padRight = (txt, len) => (txt.length >= len ? txt.substring(0, len) : txt + ' '.repeat(len - txt.length));
-  const padLeft = (txt, len) => (txt.length >= len ? txt.substring(0, len) : ' '.repeat(len - txt.length) + txt);
-
-  for (const el of sorted) {
-    lines.push(
-      `${padRight(el.name, 23)}| ${padLeft(String(el.count), 6)}| ${padRight(el.namePretty, 37)}| ${el.color}`
-    );
-  }
-
-  // Łączenie wszystkiego w jeden string JEDNYM joinem
-  const content = lines.join('\n');
-
-  // Tworzenie pliku tylko raz
-  const blob = Utilities.newBlob(content, 'text/plain', 'Podsumowanie_elementów.txt');
-  const file = folder.createFile(blob);
-
-  return file.getUrl();
-}
+// createSummaryTxtFile is implemented in helpers.js (single canonical implementation).
 
 
 

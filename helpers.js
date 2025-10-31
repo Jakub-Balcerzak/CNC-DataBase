@@ -96,33 +96,32 @@ function getOrCreateSubfolder(parentFolder, subfolderName) {
   return parentFolder.createFolder(subfolderName);
 }
 
-function createSummaryTxtFile(downloaded, folder) {
+function createSummaryTxtFile(downloaded, folder, filename) {
   if (!downloaded || downloaded.length === 0) return null;
 
   const grouped = new Map();
   for (const item of downloaded) {
-    const key = `${item.name}||${item.color || 'Bez koloru'}`;
-    const g = grouped.get(key) || { count: 0, namePretty: item.prettyName || '', color: item.color || 'Bez koloru', name: item.name };
+    const key = `${item.name}`; // group by element only
+    const g = grouped.get(key) || { count: 0, namePretty: item.prettyName || '', name: item.name };
     g.count += (item.count || 1);
     grouped.set(key, g);
   }
 
   const sorted = Array.from(grouped.values()).sort((a, b) => a.name.localeCompare(b.name));
   const lines = [];
-  lines.push('Nr kat. elementu       | Ilość | Nazwa elementu                       | Kolor');
-  lines.push('------------------------+--------+-------------------------------------+------------');
+  lines.push('Nr kat. elementu       | Ilość | Nazwa elementu');
+  lines.push('------------------------+-------+-------------------------------------');
 
   const padRight = (txt, len) => (txt.length >= len ? txt.substring(0, len) : txt + ' '.repeat(len - txt.length));
   const padLeft = (txt, len) => (txt.length >= len ? txt.substring(0, len) : ' '.repeat(len - txt.length) + txt);
 
   for (const el of sorted) {
-    lines.push(
-      `${padRight(el.name, 23)}| ${padLeft(String(el.count), 6)}| ${padRight(el.namePretty, 37)}| ${el.color}`
-    );
+    lines.push(`${padRight(el.name, 23)}| ${padLeft(String(el.count), 5)} | ${padRight(el.namePretty, 37)}`);
   }
 
   const content = lines.join('\n');
-  const blob = Utilities.newBlob(content, 'text/plain', 'Podsumowanie_elementów.txt');
+  const fileName = filename || 'Podsumowanie_elementów.txt';
+  const blob = Utilities.newBlob(content, 'text/plain', fileName);
   const file = folder.createFile(blob);
   return file.getUrl();
 }

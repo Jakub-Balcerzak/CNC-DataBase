@@ -3,7 +3,7 @@ function onOpen() {
   ui.createMenu('CNC')
     .addItem('Pobierz pliki dla zestawu (z kolorami)...', 'promptAndDownloadWithColors')
     .addItem('Pobierz pliki dla modułu...', 'promptAndDownloadModule')
-    .addItem('Pobierz pliki dla zestawu...', 'promptAndDownload')
+    .addItem('Pobierz listę elementów dla zestawu...', 'promptAndCreateElementList')
     .addToUi();
 
   ui.createMenu('Sync')
@@ -40,7 +40,24 @@ function promptAndDownload() {
     return;
   }
   try {
-    downloadSetFiles(setId);
+    // Deprecated: single-set download removed. Use "Pobierz pliki dla zestawu (z kolorami)" and leave colors unset.
+    ui.alert('Opcja usunięta', 'Użyj menu "Pobierz pliki dla zestawu (z kolorami)..." i nie wybieraj kolorów, aby pobrać bez podziału.', ui.ButtonSet.OK);
+  } catch (e) {
+    ui.alert('Błąd', 'Wystąpił błąd: ' + e.message, ui.ButtonSet.OK);
+  }
+}
+
+function promptAndCreateElementList() {
+  const ui = SpreadsheetApp.getUi();
+  const resp = ui.prompt('Pobierz listę elementów', 'Podaj numer zestawu (np. P1608):', ui.ButtonSet.OK_CANCEL);
+  if (resp.getSelectedButton() !== ui.Button.OK) return;
+  const setId = resp.getResponseText().trim();
+  if (!setId) {
+    ui.alert('Nie podano numeru zestawu.');
+    return;
+  }
+  try {
+    createElementListForSet(setId);
   } catch (e) {
     ui.alert('Błąd', 'Wystąpił błąd: ' + e.message, ui.ButtonSet.OK);
   }
