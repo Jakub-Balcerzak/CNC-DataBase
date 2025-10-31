@@ -25,7 +25,8 @@ function updateLinks(ss, foundLinks, elementName, newLink, ui) {
   for (const f of foundLinks) {
     const sheet = ss.getSheetByName(f.sheet);
     if (!sheet) continue;
-    const cell = sheet.getRange(f.row, 2);
+    const col = f.col || 2; // jeśli brak informacji o kolumnie - domyślnie B
+    const cell = sheet.getRange(f.row, col);
     const text = cell.getDisplayValue() || elementName;
     const newRich = SpreadsheetApp.newRichTextValue()
       .setText(text)
@@ -51,7 +52,7 @@ function promptAndCompareLinks() {
   const sheetsToCheck = ['Zestawy CNC', 'Moduły CNC', 'Elementy CNC'];
   const foundLinks = [];
 
-  // Zbierz wszystkie linki
+  // Zbierz wszystkie linki — sprawdzamy kolumny A (0) i B (1)
   for (const sheetName of sheetsToCheck) {
     const sheet = ss.getSheetByName(sheetName);
     if (!sheet) continue;
@@ -60,17 +61,19 @@ function promptAndCompareLinks() {
     const richValues = range.getRichTextValues();
 
     for (let r = 0; r < values.length; r++) {
-      const name = String(values[r][1]).trim();
-      if (name === elementName) {
-        let link = null;
-        try {
-          link = richValues[r][1]?.getLinkUrl() || '(brak linku)';
-        } catch (e) {
-          link = '(brak linku)';
-        }
+      for (let c = 0; c <= 1; c++) {
+        const cellVal = String(values[r][c]).trim();
+        if (cellVal === elementName) {
+          let link = null;
+          try {
+            link = richValues[r][c]?.getLinkUrl() || '(brak linku)';
+          } catch (e) {
+            link = '(brak linku)';
+          }
 
-        const status = checkDriveLinkStatus(link);
-        foundLinks.push({ sheet: sheetName, row: r + 1, link, ...status });
+          const status = checkDriveLinkStatus(link);
+          foundLinks.push({ sheet: sheetName, row: r + 1, col: c + 1, link, ...status });
+        }
       }
     }
   }
@@ -84,7 +87,10 @@ function promptAndCompareLinks() {
   const onlyMissing = invalidLinks.every(f => f.status === 'Brak linku');
 
   if (invalidLinks.length > 0 && !(hasValid && onlyMissing)) {
-    const msg = invalidLinks.map(f => `• ${f.sheet}!B${f.row} → ${f.status}`).join('\n');
+    const msg = invalidLinks.map(f => {
+      const colLetter = f.col ? String.fromCharCode(64 + f.col) : 'B';
+      return `• ${f.sheet}!${colLetter}${f.row} → ${f.status}`;
+    }).join('\n');
     const response = ui.prompt(
       'Znaleziono błędne linki',
       `Dla elementu "${elementName}" wykryto błędne linki:\n\n${msg}\n\nPodaj nowy, poprawny link:`,
@@ -175,19 +181,20 @@ function syncElementLink(elementName, link) {
   for (const sheetName of sheetsToCheck) {
     const sheet = ss.getSheetByName(sheetName);
     if (!sheet) continue;
-
     const dataRange = sheet.getDataRange();
     const values = dataRange.getValues();
     for (let r = 0; r < values.length; r++) {
-      const cellValue = String(values[r][1]).trim();
-      if (cellValue === elementName) {
-        const richText = SpreadsheetApp.newRichTextValue()
-          .setText(cellValue)
-          .setLinkUrl(link)
-          .build();
+      for (let c = 0; c <= 1; c++) {
+        const cellValue = String(values[r][c]).trim();
+        if (cellValue === elementName) {
+          const richText = SpreadsheetApp.newRichTextValue()
+            .setText(cellValue)
+            .setLinkUrl(link)
+            .build();
 
-        sheet.getRange(r + 1, 2).setRichTextValue(richText);
-        totalUpdated++;
+          sheet.getRange(r + 1, c + 1).setRichTextValue(richText);
+          totalUpdated++;
+        }
       }
     }
   }
@@ -209,13 +216,15 @@ function massCheckAndFixLinks() {
     const richTexts = sheet.getDataRange().getRichTextValues();
 
     for (let i = 1; i < data.length; i++) {
-      const name = data[i][1];
-      if (!name) continue;
-      const linkObj = richTexts[i][1];
-      const link = linkObj && linkObj.getLinkUrl ? linkObj.getLinkUrl() : null;
+      for (let c = 0; c <= 1; c++) {
+        const name = data[i][c];
+        if (!name) continue;
+        const linkObj = richTexts[i][c];
+        const link = linkObj && linkObj.getLinkUrl ? linkObj.getLinkUrl() : null;
 
-      if (!elementLinks[name]) elementLinks[name] = [];
-      elementLinks[name].push({ sheet: sheetName, row: i + 1, link });
+        if (!elementLinks[name]) elementLinks[name] = [];
+        elementLinks[name].push({ sheet: sheetName, row: i + 1, col: c + 1, link });
+      }
     }
   });
 
@@ -232,7 +241,8 @@ function massCheckAndFixLinks() {
       entries.forEach(e => {
         if (!e.link) {
           const sheet = ss.getSheetByName(e.sheet);
-          const cell = sheet.getRange(e.row, 2);
+          const col = e.col || 2;
+          const cell = sheet.getRange(e.row, col);
           const richText = SpreadsheetApp.newRichTextValue()
             .setText(name)
             .setLinkUrl(validLink)
@@ -261,7 +271,8 @@ function massCheckAndFixLinks() {
           const chosen = uniqueLinks[index - 1];
           entries.forEach(e => {
             const sheet = ss.getSheetByName(e.sheet);
-            const cell = sheet.getRange(e.row, 2);
+            const col = e.col || 2;
+            const cell = sheet.getRange(e.row, col);
             const richText = SpreadsheetApp.newRichTextValue()
               .setText(name)
               .setLinkUrl(chosen)

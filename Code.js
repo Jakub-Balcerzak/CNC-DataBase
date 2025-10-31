@@ -1131,7 +1131,8 @@ function updateLinks(ss, foundLinks, elementName, newLink, ui) {
   for (const f of foundLinks) {
     const sheet = ss.getSheetByName(f.sheet);
     if (!sheet) continue;
-    const cell = sheet.getRange(f.row, 2);
+    const col = f.col || 2;
+    const cell = sheet.getRange(f.row, col);
     const text = cell.getDisplayValue() || elementName;
     const newRich = SpreadsheetApp.newRichTextValue()
       .setText(text)
