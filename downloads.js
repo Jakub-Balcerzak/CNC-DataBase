@@ -28,7 +28,7 @@ function downloadSetFilesWithColors(setId) {
   // Zbierz listę unikalnych elementów (rozwiń moduły rekurencyjnie)
   const elements = [];
   const seen = new Set();
-  const collect = (list) => {
+  const collect = (list, parentModule) => {
     for (const e of list) {
       if (!e || !e.text) continue;
       const name = String(e.text).trim();
@@ -36,13 +36,13 @@ function downloadSetFilesWithColors(setId) {
 
       if (isModuleName(name)) {
         const children = modulesMap[name] || [];
-        collect(children);
+        collect(children, name);
       } else {
         if (!seen.has(name)) {
           seen.add(name);
           const data = findElementData(name, modulesMap, zestawyMap) || {};
           const rich = e.richLink || findLinkForElement(name, modulesMap, zestawyMap);
-          elements.push({ text: name, name: data.name || '', richLink: rich });
+          elements.push({ text: name, name: data.name || '', richLink: rich, module: parentModule || '' });
         }
       }
     }

@@ -83,14 +83,21 @@ function downloadSetFilesWithColors(setId) {
 
   // 🔍 Zbierz listę wszystkich unikalnych elementów (rekurencyjnie)
   const elements = [];
-  const collect = (list) => {
+  const seen = new Set();
+  const collect = (list, parentModule) => {
     for (const e of list) {
-      const n = e.text.trim();
+      const n = String(e.text).trim();
+      if (!n) continue;
       if (!isModuleName(n)) {
-        if (!elements.find(el => el.text === n)) elements.push(e);
+        if (!seen.has(n)) {
+          seen.add(n);
+          const data = findElementData(n, modulesMap, zestawyMap) || {};
+          const rich = e.richLink || findLinkForElement(n, modulesMap, zestawyMap);
+          elements.push({ text: n, name: data.name || '', richLink: rich, module: parentModule || '' });
+        }
       } else {
         const sub = modulesMap[n];
-        if (sub && sub.length) collect(sub);
+        if (sub && sub.length) collect(sub, n);
       }
     }
   };

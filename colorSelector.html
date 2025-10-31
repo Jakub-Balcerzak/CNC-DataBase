@@ -42,6 +42,7 @@
     <form id="colorForm">
       <table>
         <tr>
+          <th>Nr modułu</th>
           <th>Nr kat. elementu</th>
           <th>Nazwa elementu</th>
           <th>Podgląd</th>
@@ -49,6 +50,7 @@
         </tr>
         <? for (let e of data) { ?>
           <tr>
+            <td><?= e.module || '' ?></td>
             <td><?= e.text ?></td>
             <td><?= e.name || '' ?></td>
             <td>
