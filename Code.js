@@ -63,7 +63,7 @@ function downloadSetFilesWithColors(setId) {
   const ui = SpreadsheetApp.getUi();
 
   if (!sheetZest || !sheetMod) {
-    ui.alert('Błąd', `Brakuje arkuszy "${SHEET_ZESTAWY}" lub "${SHEET_MODULE}".`);
+    ui.alert('Błąd', `Brakuje arkuszy "${SHEET_ZESTAWY}" lub "${SHEET_MODULE}".`, ui.ButtonSet.OK);
     return;
   }
 
@@ -77,7 +77,7 @@ function downloadSetFilesWithColors(setId) {
 
   const startElements = zestawyMap[setId];
   if (!startElements || startElements.length === 0) {
-    ui.alert('Nie znaleziono zestawu', `Brak wierszy o Nr zestawu = "${setId}".`);
+    ui.alert('Nie znaleziono zestawu', `Brak wierszy o Nr zestawu = "${setId}".`, ui.ButtonSet.OK);
     return;
   }
 
