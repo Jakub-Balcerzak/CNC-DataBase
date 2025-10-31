@@ -1,4 +1,5 @@
 /**
+ * Lokalne zmiany witam witam pozdrawiam serdecznie
  * Rejestr Plików CNC - pobieranie DXF
  * Wklej ten kod do Extensions -> Apps Script.
  *
