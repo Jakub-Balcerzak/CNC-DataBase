@@ -465,10 +465,10 @@ function startDownloadWithColors(colorMap, setId) {
   // 1) Zbierz totals: element -> totalCount
   const totals = {}; // { elementName: totalCount }
   const pathVisited = {}; // będzie używane w rekurencji (dla bieżącej ścieżki)
-
+  const moduleMap = {};
   for (let e of startElements) {
     const topCount = (typeof e.count === 'number' && !isNaN(e.count) && e.count > 0) ? e.count : 1;
-    collectElementTotals(e.text, topCount, modulesMap, zestawyMap, totals, pathVisited);
+    collectElementTotals(e.text, topCount, modulesMap, zestawyMap, totals, pathVisited, moduleMap);
   }
 
   // jeśli nie ma nic do pobrania
@@ -721,7 +721,7 @@ function getOrCreateSubfolder(parentFolder, subfolderName) {
  * - pathVisited blokuje moduł tylko na bieżącej ścieżce (zapobiega nieskończonej pętli)
  * - modulesMap: mapa moduł -> array entries {text, richLink, count, ...}
  */
-function collectElementTotals(name, multiplier, modulesMap, zestawyMap, totals, pathVisited) {
+function collectElementTotals(name, multiplier, modulesMap, zestawyMap, totals, pathVisited, moduleMap, parentModule) {
   name = String(name).trim();
   if (!name) return;
 
@@ -742,7 +742,8 @@ function collectElementTotals(name, multiplier, modulesMap, zestawyMap, totals, 
 
     for (let ch of children) {
       const childCount = (typeof ch.count === 'number' && !isNaN(ch.count) && ch.count > 0) ? ch.count : 1;
-      collectElementTotals(ch.text, multiplier * childCount, modulesMap, zestawyMap, totals, pathVisited);
+      // przekaż aktualny moduł jako parentModule
+      collectElementTotals(ch.text, multiplier * childCount, modulesMap, zestawyMap, totals, pathVisited, moduleMap, name);
     }
 
     // odblokuj moduł dla innych ścieżek
@@ -753,6 +754,11 @@ function collectElementTotals(name, multiplier, modulesMap, zestawyMap, totals, 
   // to element końcowy — sumujemy
   const add = Number(multiplier) || 1;
   totals[name] = (totals[name] || 0) + add;
+
+  // zapisz moduł źródłowy, jeśli jest podany i nie ma jeszcze przypisania
+  if (moduleMap && parentModule) {
+    if (!moduleMap[name]) moduleMap[name] = parentModule;
+  }
 }
 
 function checkDriveLinkStatus(link) {

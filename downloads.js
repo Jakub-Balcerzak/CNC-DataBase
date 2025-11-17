@@ -97,15 +97,16 @@ function createElementListForSet(setId) {
 
   const totals = {};
   const pathVisited = {};
+  const moduleMap = {};
   for (const e of startElements) {
     const count = (e && typeof e.count === 'number' && !isNaN(e.count) && e.count > 0) ? e.count : 1;
-    collectElementTotals(e.text, count, modulesMap, zestawyMap, totals, pathVisited);
+    collectElementTotals(e.text, count, modulesMap, zestawyMap, totals, pathVisited, moduleMap);
   }
 
   const downloaded = [];
   for (const name of Object.keys(totals).sort()) {
     const data = findElementData(name, modulesMap, zestawyMap) || {};
-    downloaded.push({ name: name, count: totals[name], prettyName: data.name || '', color: 'Bez koloru' });
+    downloaded.push({ name: name, count: totals[name], prettyName: data.name || '', color: 'Bez koloru', module: moduleMap[name] || '' });
   }
 
   if (downloaded.length === 0) {
@@ -158,15 +159,17 @@ function createElementListForModule(modId) {
   const totals = {};
   const pathVisited = {};
   // startElements are children of the module; use each child's count
+  const moduleMap = {};
   for (const e of startElements) {
     const count = (e && typeof e.count === 'number' && !isNaN(e.count) && e.count > 0) ? e.count : 1;
-    collectElementTotals(e.text, count, modulesMap, zestawyMap, totals, pathVisited);
+    // pass parentModule = modId so collected elements get this module noted
+    collectElementTotals(e.text, count, modulesMap, zestawyMap, totals, pathVisited, moduleMap, modId);
   }
 
   const downloaded = [];
   for (const name of Object.keys(totals).sort()) {
     const data = findElementData(name, modulesMap, zestawyMap) || {};
-    downloaded.push({ name: name, count: totals[name], prettyName: data.name || '', color: 'Bez koloru' });
+    downloaded.push({ name: name, count: totals[name], prettyName: data.name || '', color: 'Bez koloru', module: moduleMap[name] || '' });
   }
 
   if (downloaded.length === 0) {
@@ -464,9 +467,10 @@ function startDownloadWithColors(colorMap, setId) {
     // 1) totals
     const totals = {};
     const pathVisited = {};
+    const moduleMap = {};
     for (let e of startElements) {
       const topCount = (typeof e.count === 'number' && !isNaN(e.count) && e.count > 0) ? e.count : 1;
-      collectElementTotals(e.text, topCount, modulesMap, zestawyMap, totals, pathVisited);
+      collectElementTotals(e.text, topCount, modulesMap, zestawyMap, totals, pathVisited, moduleMap);
     }
 
     const elementNames = Object.keys(totals);
@@ -524,7 +528,7 @@ function startDownloadWithColors(colorMap, setId) {
         const colorFolder = getOrCreateSubfolder(folder, job.color);
         // makeCopy into target folder
         src.makeCopy(fileName, colorFolder);
-        downloaded.push({ name: job.name, color: job.color, prettyName: dataMap[job.name]?.name || '', count: job.count });
+  downloaded.push({ name: job.name, color: job.color, prettyName: dataMap[job.name]?.name || '', count: job.count, module: moduleMap[job.name] || '' });
       } catch (e) {
         errors.push(`${job.name}: (copy) ${e.message}`);
         // fallback: try to add to fetchJobs using direct download URL constructed from id
@@ -576,7 +580,7 @@ function startDownloadWithColors(colorMap, setId) {
           blob.setName(fileName);
           const colorFolder = getOrCreateSubfolder(folder, job.color);
           colorFolder.createFile(blob);
-          downloaded.push({ name: job.name, color: job.color, prettyName: dataMap[job.name]?.name || '', count: job.count });
+          downloaded.push({ name: job.name, color: job.color, prettyName: dataMap[job.name]?.name || '', count: job.count, module: moduleMap[job.name] || '' });
         } catch (e) {
           errors.push(`${job.name}: ${e.message}`);
         }

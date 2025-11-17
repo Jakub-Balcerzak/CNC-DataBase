@@ -99,24 +99,59 @@ function getOrCreateSubfolder(parentFolder, subfolderName) {
 function createSummaryTxtFile(downloaded, folder, filename) {
   if (!downloaded || downloaded.length === 0) return null;
 
+  // Group by element name but preserve first-seen module (if present)
   const grouped = new Map();
   for (const item of downloaded) {
     const key = `${item.name}`; // group by element only
-    const g = grouped.get(key) || { count: 0, namePretty: item.prettyName || '', name: item.name };
-    g.count += (item.count || 1);
-    grouped.set(key, g);
+    const existing = grouped.get(key);
+    if (!existing) {
+      grouped.set(key, {
+        count: item.count || 1,
+        namePretty: item.prettyName || '',
+        name: item.name,
+        module: item.module || ''
+      });
+    } else {
+      existing.count += (item.count || 1);
+      // keep existing.module (first seen)
+    }
   }
 
-  const sorted = Array.from(grouped.values()).sort((a, b) => a.name.localeCompare(b.name));
+  // Sort by module (if present) then by element name. Elements without module go after those with a module.
+  const sorted = Array.from(grouped.values()).sort((a, b) => {
+    const ma = (a.module || '').toString().trim();
+    const mb = (b.module || '').toString().trim();
+    const aHas = ma !== '';
+    const bHas = mb !== '';
+    if (aHas && !bHas) return -1;
+    if (!aHas && bHas) return 1;
+    if (aHas && bHas) {
+      const cmp = ma.localeCompare(mb);
+      if (cmp !== 0) return cmp;
+    }
+    return a.name.localeCompare(b.name);
+  });
+  const hasModule = sorted.some(s => s.module && String(s.module).trim() !== '');
+
   const lines = [];
-  lines.push('Nr kat. elementu       | Ilość | Nazwa elementu');
-  lines.push('------------------------+-------+-------------------------------------');
+  if (hasModule) {
+    lines.push('Nr modułu | Nr kat. elementu       | Ilość | Nazwa elementu');
+    lines.push('----------+------------------------+-------+-------------------------------------');
+  } else {
+    lines.push('Nr kat. elementu       | Ilość | Nazwa elementu');
+    lines.push('------------------------+-------+-------------------------------------');
+  }
 
   const padRight = (txt, len) => (txt.length >= len ? txt.substring(0, len) : txt + ' '.repeat(len - txt.length));
   const padLeft = (txt, len) => (txt.length >= len ? txt.substring(0, len) : ' '.repeat(len - txt.length) + txt);
 
   for (const el of sorted) {
-    lines.push(`${padRight(el.name, 23)}| ${padLeft(String(el.count), 5)} | ${padRight(el.namePretty, 37)}`);
+    if (hasModule) {
+      const mod = padRight(String(el.module || ''), 8);
+      lines.push(`${mod} | ${padRight(el.name, 23)}| ${padLeft(String(el.count), 5)} | ${padRight(el.namePretty, 37)}`);
+    } else {
+      lines.push(`${padRight(el.name, 23)}| ${padLeft(String(el.count), 5)} | ${padRight(el.namePretty, 37)}`);
+    }
   }
 
   const content = lines.join('\n');
@@ -126,10 +161,10 @@ function createSummaryTxtFile(downloaded, folder, filename) {
   return file.getUrl();
 }
 
-function collectElementTotals(name, multiplier, modulesMap, zestawyMap, totals, pathVisited) {
+function collectElementTotals(name, multiplier, modulesMap, zestawyMap, totals, pathVisited, moduleMap, parentModule) {
   name = String(name).trim();
   if (!name) return;
-
+  // If this is a module, descend into its children and mark current module as parent
   if (isModuleName(name)) {
     if (pathVisited[name]) {
       return;
@@ -144,7 +179,8 @@ function collectElementTotals(name, multiplier, modulesMap, zestawyMap, totals, 
 
     for (let ch of children) {
       const childCount = (typeof ch.count === 'number' && !isNaN(ch.count) && ch.count > 0) ? ch.count : 1;
-      collectElementTotals(ch.text, multiplier * childCount, modulesMap, zestawyMap, totals, pathVisited);
+      // pass current module name as parentModule for children
+      collectElementTotals(ch.text, multiplier * childCount, modulesMap, zestawyMap, totals, pathVisited, moduleMap, name);
     }
 
     pathVisited[name] = false;
@@ -153,6 +189,11 @@ function collectElementTotals(name, multiplier, modulesMap, zestawyMap, totals, 
 
   const add = Number(multiplier) || 1;
   totals[name] = (totals[name] || 0) + add;
+
+  // Record module for element if provided and not already set
+  if (moduleMap && parentModule) {
+    if (!moduleMap[name]) moduleMap[name] = parentModule;
+  }
 }
 
 function guessExtension(url, blob) {
