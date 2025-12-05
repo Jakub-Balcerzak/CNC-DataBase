@@ -238,33 +238,100 @@ function downloadModuleFiles(modId) {
     processElementRecursive(e.text, e.richLink, modulesMap, zestawyMap, visited, folder, downloaded, missingLinks, errors);
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // POBIERANIE PLIKU UCANCAM
+  // ═══════════════════════════════════════════════════════════════════════════
+  
+  const COL_UCANCAM = 5; // kolumna F (0-based index)
+  let ucancamDownloaded = null;
+  let ucancamError = null;
+  let ucancamMissing = false;
+
+  // Szukaj linku UCANCAM dla modułu w arkuszu 'Moduły CNC'
+  // Bierzemy pierwszy znaleziony wiersz z tym modułem
+  let ucancamLink = null;
+  for (let i = 1; i < modValues.length; i++) {
+    const rowModName = String(modValues[i][0]).trim();
+    if (rowModName === modId) {
+      // Sprawdź czy jest link w kolumnie F
+      try {
+        const richCell = modRich[i][COL_UCANCAM];
+        if (richCell && typeof richCell.getLinkUrl === 'function') {
+          ucancamLink = richCell.getLinkUrl() || null;
+        }
+      } catch (e) {
+        ucancamLink = null;
+      }
+      if (ucancamLink) break; // znaleziono link, przerywamy
+    }
+  }
+
+  if (ucancamLink) {
+    try {
+      const fileIdMatch = ucancamLink.match(/[-\w]{25,}/);
+      if (fileIdMatch) {
+        const fileId = fileIdMatch[0];
+        const sourceFile = DriveApp.getFileById(fileId);
+        const originalFileName = sourceFile.getName();
+        
+        // Utwórz podfolder UCANCAM
+        const ucancamFolder = folder.createFolder('UCANCAM');
+        
+        // Skopiuj plik z oryginalną nazwą
+        sourceFile.makeCopy(originalFileName, ucancamFolder);
+        ucancamDownloaded = originalFileName;
+      } else {
+        ucancamError = 'Nieprawidłowy format linku UCANCAM';
+      }
+    } catch (e) {
+      ucancamError = e.message;
+    }
+  } else {
+    ucancamMissing = true;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PODSUMOWANIE
+  // ═══════════════════════════════════════════════════════════════════════════
+
   const summaryLines = [];
   summaryLines.push(`📁 Utworzony folder:`);
   summaryLines.push(folderUrl);
   summaryLines.push('');
-  summaryLines.push(`Pobrano plików: ${downloaded.length}`);
+  summaryLines.push(`📄 Pobrano plików DXF: ${downloaded.length}`);
   if (downloaded.length) {
-    downloaded.slice(0, 20).forEach(d => {
+    downloaded.slice(0, 15).forEach(d => {
       const surfaceStr = d.surface ? ` (${d.surface.toFixed(3)} m²)` : '';
       const pretty = d.prettyName ? ` – ${d.prettyName}` : '';
-      summaryLines.push(`• ${d.name}${pretty}${surfaceStr}`);
+      summaryLines.push(`   • ${d.name}${pretty}${surfaceStr}`);
     });
-    if (downloaded.length > 20) summaryLines.push(`... + ${downloaded.length - 20} innych`);
+    if (downloaded.length > 15) summaryLines.push(`   ... + ${downloaded.length - 15} innych`);
   }
+  
+  // Info o UCANCAM
+  summaryLines.push('');
+  if (ucancamDownloaded) {
+    summaryLines.push(`📦 UCANCAM: ✅ ${ucancamDownloaded}`);
+  } else if (ucancamError) {
+    summaryLines.push(`📦 UCANCAM: ❌ Błąd - ${ucancamError}`);
+  } else if (ucancamMissing) {
+    summaryLines.push(`📦 UCANCAM: ⚠️ Brak linku dla modułu ${modId}`);
+  }
+  
   if (missingLinks.length) {
     summaryLines.push('');
-    summaryLines.push(`Elementy bez hiperłącza (${missingLinks.length}):`);
-    missingLinks.forEach(m => summaryLines.push(`• ${m}`));
+    summaryLines.push(`❌ Elementy bez hiperłącza DXF (${missingLinks.length}):`);
+    missingLinks.forEach(m => summaryLines.push(`   • ${m}`));
   }
   if (errors.length) {
     summaryLines.push('');
-    summaryLines.push(`Błędy (${errors.length}):`);
-    errors.forEach(err => summaryLines.push(`• ${err}`));
+    summaryLines.push(`⚠️ Błędy (${errors.length}):`);
+    errors.forEach(err => summaryLines.push(`   • ${err}`));
   }
   if (dataWarnings.length) {
     summaryLines.push('');
     summaryLines.push(`⚠️ Ostrzeżenia dotyczące danych (${dataWarnings.length}):`);
-    dataWarnings.forEach(w => summaryLines.push(`• ${w}`));
+    dataWarnings.forEach(w => summaryLines.push(`   • ${w}`));
   }
 
   ui.alert('Pobieranie zakończone', summaryLines.join('\n'), ui.ButtonSet.OK);
