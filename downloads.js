@@ -499,178 +499,328 @@ function startDownloadWithColors(colorMap, setId) {
   const sheetZest = ss.getSheetByName(SHEET_ZESTAWY);
   const sheetMod = ss.getSheetByName(SHEET_MODULE);
 
+  const COL_UCANCAM = 5; // kolumna F (0-based index)
 
+  // Helper: pobiera link z RichText lub null
+  function getRichLink(richCell) {
+    if (!richCell) return null;
+    try {
+      if (typeof richCell.getLinkUrl === 'function') {
+        return richCell.getLinkUrl() || null;
+      }
+    } catch (e) {}
+    return null;
+  }
 
+  // Optimized download:
+  // - precompute maps
+  // - use DriveApp.copy (makeCopy) for Drive fileIds when possible
+  // - use UrlFetchApp.fetchAll in batches for the rest
+  const zestValues = sheetZest.getDataRange().getValues();
+  const zestRich = sheetZest.getDataRange().getRichTextValues();
+  const modValues = sheetMod.getDataRange().getValues();
+  const modRich = sheetMod.getDataRange().getRichTextValues();
 
+  const zestawyMap = buildMapForSheet(zestValues, zestRich, 0, 1, SHEET_ZESTAWY).map;
+  const modulesMap = buildMapForSheet(modValues, modRich, 0, 1, SHEET_MODULE).map;
 
+  const startElements = zestawyMap[setId];
+  if (!startElements || startElements.length === 0) {
+    if (ui) ui.alert('Nie znaleziono zestawu', `Brak wierszy o Nr zestawu = "${setId}".`);
+    return;
+  }
 
+  // 1) totals + zbieranie modułów użytych w zestawie
+  const totals = {};
+  const pathVisited = {};
+  const moduleMap = {};
+  const usedModules = new Set(); // moduły użyte w zestawie
 
+  // Rozszerzona wersja collectElementTotals która zbiera też moduły
+  function collectWithModules(name, multiplier, parentModule) {
+    name = String(name).trim();
+    if (!name) return;
 
+    if (isModuleName(name)) {
+      usedModules.add(name); // dodaj moduł do listy
+      
+      if (pathVisited[name]) return;
+      pathVisited[name] = true;
 
-
-
-
-
-
-
-    // Optimized download:
-    // - precompute maps
-    // - use DriveApp.copy (makeCopy) for Drive fileIds when possible
-    // - use UrlFetchApp.fetchAll in batches for the rest
-    const zestValues = sheetZest.getDataRange().getValues();
-    const zestRich = sheetZest.getDataRange().getRichTextValues();
-    const modValues = sheetMod.getDataRange().getValues();
-    const modRich = sheetMod.getDataRange().getRichTextValues();
-
-    const zestawyMap = buildMapForSheet(zestValues, zestRich, 0, 1, SHEET_ZESTAWY).map;
-    const modulesMap = buildMapForSheet(modValues, modRich, 0, 1, SHEET_MODULE).map;
-
-    const startElements = zestawyMap[setId];
-    if (!startElements || startElements.length === 0) {
-      if (ui) ui.alert('Nie znaleziono zestawu', `Brak wierszy o Nr zestawu = "${setId}".`);
+      const children = modulesMap[name];
+      if (children && children.length > 0) {
+        for (let ch of children) {
+          const childCount = (typeof ch.count === 'number' && !isNaN(ch.count) && ch.count > 0) ? ch.count : 1;
+          collectWithModules(ch.text, multiplier * childCount, name);
+        }
+      }
+      pathVisited[name] = false;
       return;
     }
 
-    // 1) totals
-    const totals = {};
-    const pathVisited = {};
-    const moduleMap = {};
-    for (let e of startElements) {
-      const topCount = (typeof e.count === 'number' && !isNaN(e.count) && e.count > 0) ? e.count : 1;
-      collectElementTotals(e.text, topCount, modulesMap, zestawyMap, totals, pathVisited, moduleMap);
+    // Element końcowy
+    const add = Number(multiplier) || 1;
+    totals[name] = (totals[name] || 0) + add;
+    if (parentModule && !moduleMap[name]) {
+      moduleMap[name] = parentModule;
+    }
+  }
+
+  for (let e of startElements) {
+    const topCount = (typeof e.count === 'number' && !isNaN(e.count) && e.count > 0) ? e.count : 1;
+    collectWithModules(e.text, topCount, null);
+  }
+
+  const elementNames = Object.keys(totals);
+  if (elementNames.length === 0) {
+    if (ui) ui.alert('Brak elementów do pobrania.');
+    return;
+  }
+
+  // Precompute link and elementData maps to avoid repeated scanning
+  const linkMap = {};
+  const dataMap = {};
+  for (const name of elementNames) {
+    const link = findLinkForElement(name, modulesMap, zestawyMap);
+    linkMap[name] = link;
+    const d = findElementData(name, modulesMap, zestawyMap) || {};
+    dataMap[name] = d;
+  }
+
+  // 2) create folder
+  const folderName = `Rejestr Plików CNC - Pobrania ${setId} - ${timestampForName()}`;
+  const folder = DriveApp.createFolder(folderName);
+  const folderUrl = folder.getUrl();
+
+  const missingLinks = [];
+  const downloaded = [];
+  const errors = [];
+
+  // Partition into Drive-copyable and fetch-needed
+  const copyJobs = [];
+  const fetchJobs = [];
+
+  for (const name of elementNames) {
+    const link = linkMap[name];
+    const count = totals[name] || 0;
+    const color = (colorMap && colorMap[name]) ? colorMap[name] : 'Bez koloru';
+    if (!link) {
+      missingLinks.push(name);
+      continue;
+    }
+    const fileIdMatch = link.match(/[-\w]{25,}/);
+    if (fileIdMatch) {
+      copyJobs.push({ name, fileId: fileIdMatch[0], color, count });
+    } else {
+      const direct = link;
+      fetchJobs.push({ name, url: direct, color, count });
+    }
+  }
+
+  // 3) Perform Drive copies (fast)
+  for (const job of copyJobs) {
+    try {
+      const src = DriveApp.getFileById(job.fileId);
+      const fileName = sanitizeFileName(job.name) + '.dxf';
+      const colorFolder = getOrCreateSubfolder(folder, job.color);
+      src.makeCopy(fileName, colorFolder);
+      downloaded.push({ name: job.name, color: job.color, prettyName: dataMap[job.name]?.name || '', count: job.count, module: moduleMap[job.name] || '' });
+    } catch (e) {
+      errors.push(`${job.name}: (copy) ${e.message}`);
+      try {
+        const dl = `https://drive.google.com/uc?export=download&id=${job.fileId}`;
+        fetchJobs.push({ name: job.name, url: dl, color: job.color, count: job.count });
+      } catch (e2) {
+        Logger.log('Fallback enqueue failed for ' + job.name + ': ' + e2.message);
+      }
+    }
+  }
+
+  // 4) Fetch remaining via UrlFetchApp.fetchAll in batches
+  const BATCH = 20;
+  for (let i = 0; i < fetchJobs.length; i += BATCH) {
+    const slice = fetchJobs.slice(i, i + BATCH);
+    const requests = slice.map(j => ({ url: j.url, muteHttpExceptions: true, followRedirects: true }));
+    let responses = [];
+    try {
+      responses = UrlFetchApp.fetchAll(requests);
+    } catch (e) {
+      Logger.log('fetchAll failed: ' + e.message + ' — falling back to sequential fetch');
+      for (let k = 0; k < slice.length; k++) {
+        try {
+          const r = UrlFetchApp.fetch(slice[k].url, { muteHttpExceptions: true });
+          responses.push(r);
+        } catch (e2) {
+          responses.push(null);
+        }
+      }
     }
 
-    const elementNames = Object.keys(totals);
-    if (elementNames.length === 0) {
-      if (ui) ui.alert('Brak elementów do pobrania.');
-      return;
-    }
-
-    // Precompute link and elementData maps to avoid repeated scanning
-    const linkMap = {};
-    const dataMap = {};
-    for (const name of elementNames) {
-      const link = findLinkForElement(name, modulesMap, zestawyMap);
-      linkMap[name] = link;
-      const d = findElementData(name, modulesMap, zestawyMap) || {};
-      dataMap[name] = d;
-    }
-
-    // 2) create folder
-    const folderName = `Rejestr Plików CNC - Pobrania ${setId} - ${timestampForName()}`;
-    const folder = DriveApp.createFolder(folderName);
-    const folderUrl = folder.getUrl();
-
-    const missingLinks = [];
-    const downloaded = [];
-    const errors = [];
-
-    // Partition into Drive-copyable and fetch-needed
-    const copyJobs = []; // { name, fileId, color, count }
-    const fetchJobs = []; // { name, url, color, count }
-
-    for (const name of elementNames) {
-      const link = linkMap[name];
-      const count = totals[name] || 0;
-      const color = (colorMap && colorMap[name]) ? colorMap[name] : 'Bez koloru';
-      if (!link) {
-        missingLinks.push(name);
+    for (let k = 0; k < slice.length; k++) {
+      const job = slice[k];
+      const resp = responses[k];
+      if (!resp) {
+        errors.push(`${job.name}: fetch failed (no response)`);
         continue;
       }
-      const fileIdMatch = link.match(/[-\w]{25,}/);
-      if (fileIdMatch) {
-        copyJobs.push({ name, fileId: fileIdMatch[0], color, count });
-      } else {
-        // try to use link as direct download
-        const direct = link;
-        fetchJobs.push({ name, url: direct, color, count });
-      }
-    }
-
-    // 3) Perform Drive copies (fast)
-    for (const job of copyJobs) {
       try {
-        const src = DriveApp.getFileById(job.fileId);
-        const fileName = sanitizeFileName(job.name) + '.dxf';
-        const colorFolder = getOrCreateSubfolder(folder, job.color);
-        // makeCopy into target folder
-        src.makeCopy(fileName, colorFolder);
-  downloaded.push({ name: job.name, color: job.color, prettyName: dataMap[job.name]?.name || '', count: job.count, module: moduleMap[job.name] || '' });
-      } catch (e) {
-        errors.push(`${job.name}: (copy) ${e.message}`);
-        // fallback: try to add to fetchJobs using direct download URL constructed from id
-        try {
-          const dl = `https://drive.google.com/uc?export=download&id=${job.fileId}`;
-          fetchJobs.push({ name: job.name, url: dl, color: job.color, count: job.count });
-        } catch (e2) {
-          Logger.log('Fallback enqueue failed for ' + job.name + ': ' + e2.message);
-        }
-      }
-    }
-
-    // 4) Fetch remaining via UrlFetchApp.fetchAll in batches
-    const BATCH = 20; // reasonable batch size
-    for (let i = 0; i < fetchJobs.length; i += BATCH) {
-      const slice = fetchJobs.slice(i, i + BATCH);
-      const requests = slice.map(j => ({ url: j.url, muteHttpExceptions: true, followRedirects: true }));
-      let responses = [];
-      try {
-        responses = UrlFetchApp.fetchAll(requests);
-      } catch (e) {
-        // in case fetchAll fails entirely, fallback to sequential fetch
-        Logger.log('fetchAll failed: ' + e.message + ' — falling back to sequential fetch');
-        for (let k = 0; k < slice.length; k++) {
-          try {
-            const r = UrlFetchApp.fetch(slice[k].url, { muteHttpExceptions: true });
-            responses.push(r);
-          } catch (e2) {
-            responses.push(null);
-          }
-        }
-      }
-
-      for (let k = 0; k < slice.length; k++) {
-        const job = slice[k];
-        const resp = responses[k];
-        if (!resp) {
-          errors.push(`${job.name}: fetch failed (no response)`);
+        const code = resp.getResponseCode();
+        if (code < 200 || code >= 300) {
+          errors.push(`${job.name}: HTTP ${code} for ${job.url}`);
           continue;
         }
-        try {
-          const code = resp.getResponseCode();
-          if (code < 200 || code >= 300) {
-            errors.push(`${job.name}: HTTP ${code} for ${job.url}`);
-            continue;
-          }
-          const blob = resp.getBlob();
-          const fileName = sanitizeFileName(job.name) + '.dxf';
-          blob.setName(fileName);
-          const colorFolder = getOrCreateSubfolder(folder, job.color);
-          colorFolder.createFile(blob);
-          downloaded.push({ name: job.name, color: job.color, prettyName: dataMap[job.name]?.name || '', count: job.count, module: moduleMap[job.name] || '' });
-        } catch (e) {
-          errors.push(`${job.name}: ${e.message}`);
-        }
+        const blob = resp.getBlob();
+        const fileName = sanitizeFileName(job.name) + '.dxf';
+        blob.setName(fileName);
+        const colorFolder = getOrCreateSubfolder(folder, job.color);
+        colorFolder.createFile(blob);
+        downloaded.push({ name: job.name, color: job.color, prettyName: dataMap[job.name]?.name || '', count: job.count, module: moduleMap[job.name] || '' });
+      } catch (e) {
+        errors.push(`${job.name}: ${e.message}`);
+      }
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // POBIERANIE PLIKÓW UCANCAM
+  // ═══════════════════════════════════════════════════════════════════════════
+  
+  const ucancamDownloaded = [];
+  const ucancamMissing = [];
+  const ucancamErrors = [];
+  let ucancamFolder = null;
+
+  // 5a) Pobierz UCANCAM dla MODUŁÓW (z arkusza Moduły CNC)
+  for (const modName of usedModules) {
+    let ucancamLink = null;
+    
+    // Szukaj linku UCANCAM w arkuszu Moduły CNC
+    for (let i = 1; i < modValues.length; i++) {
+      const rowModName = String(modValues[i][0]).trim();
+      if (rowModName === modName) {
+        ucancamLink = getRichLink(modRich[i][COL_UCANCAM]);
+        if (ucancamLink) break;
       }
     }
 
-    // 5) Summary
-    const summary = [];
-    summary.push(`📁 Folder: ${folderUrl}`);
-    summary.push(`Pobrano ${downloaded.length} plików.`);
-    if (missingLinks.length) {
-      summary.push('');
-      summary.push('❌ Brak hiperłączy dla:');
-      missingLinks.forEach(m => summary.push('• ' + m));
+    if (ucancamLink) {
+      try {
+        const fileIdMatch = ucancamLink.match(/[-\w]{25,}/);
+        if (fileIdMatch) {
+          const fileId = fileIdMatch[0];
+          const sourceFile = DriveApp.getFileById(fileId);
+          const originalFileName = sourceFile.getName();
+          
+          // Utwórz podfolder UCANCAM jeśli nie istnieje
+          if (!ucancamFolder) {
+            ucancamFolder = folder.createFolder('UCANCAM');
+          }
+          
+          sourceFile.makeCopy(originalFileName, ucancamFolder);
+          ucancamDownloaded.push({ name: modName, fileName: originalFileName, type: 'moduł' });
+        } else {
+          ucancamErrors.push(`${modName}: nieprawidłowy format linku`);
+        }
+      } catch (e) {
+        ucancamErrors.push(`${modName}: ${e.message}`);
+      }
+    } else {
+      ucancamMissing.push({ name: modName, type: 'moduł' });
     }
-    if (errors.length) {
-      summary.push('');
-      summary.push('⚠️ Błędy:');
-      errors.forEach(e => summary.push('• ' + e));
+  }
+
+  // 5b) Pobierz UCANCAM dla ELEMENTÓW (z arkusza Zestawy CNC)
+  // Elementy to te z kolumny B zestawu, które NIE są modułami
+  const processedElements = new Set(); // unikaj duplikatów
+  
+  for (let i = 1; i < zestValues.length; i++) {
+    const rowSetId = String(zestValues[i][0]).trim();
+    const elementName = String(zestValues[i][1]).trim();
+    
+    // Sprawdź czy to wiersz z naszego zestawu i czy to element (nie moduł)
+    if (rowSetId === setId && elementName && !isModuleName(elementName)) {
+      // Sprawdź czy już przetworzono ten element
+      if (processedElements.has(elementName)) continue;
+      processedElements.add(elementName);
+      
+      const ucancamLink = getRichLink(zestRich[i][COL_UCANCAM]);
+      
+      if (ucancamLink) {
+        try {
+          const fileIdMatch = ucancamLink.match(/[-\w]{25,}/);
+          if (fileIdMatch) {
+            const fileId = fileIdMatch[0];
+            const sourceFile = DriveApp.getFileById(fileId);
+            const originalFileName = sourceFile.getName();
+            
+            if (!ucancamFolder) {
+              ucancamFolder = folder.createFolder('UCANCAM');
+            }
+            
+            sourceFile.makeCopy(originalFileName, ucancamFolder);
+            ucancamDownloaded.push({ name: elementName, fileName: originalFileName, type: 'element' });
+          } else {
+            ucancamErrors.push(`${elementName}: nieprawidłowy format linku`);
+          }
+        } catch (e) {
+          ucancamErrors.push(`${elementName}: ${e.message}`);
+        }
+      } else {
+        ucancamMissing.push({ name: elementName, type: 'element' });
+      }
     }
+  }
 
-    if (ui) ui.alert('Zakończono', summary.join('\n'), ui.ButtonSet.OK);
-    else Logger.log(summary.join('\n'));
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PODSUMOWANIE
+  // ═══════════════════════════════════════════════════════════════════════════
+  
+  const summary = [];
+  summary.push(`📁 Folder: ${folderUrl}`);
+  summary.push('');
+  summary.push(`📄 Pobrano plików DXF: ${downloaded.length}`);
+  
+  // Info o UCANCAM
+  if (ucancamDownloaded.length > 0) {
+    summary.push('');
+    summary.push(`📦 Pobrano plików UCANCAM: ${ucancamDownloaded.length}`);
+    ucancamDownloaded.slice(0, 10).forEach(u => {
+      summary.push(`   ✅ ${u.name} (${u.type}) → ${u.fileName}`);
+    });
+    if (ucancamDownloaded.length > 10) {
+      summary.push(`   ... + ${ucancamDownloaded.length - 10} innych`);
+    }
+  }
+  
+  if (missingLinks.length) {
+    summary.push('');
+    summary.push(`❌ Brak hiperłączy DXF (${missingLinks.length}):`);
+    missingLinks.slice(0, 10).forEach(m => summary.push(`   • ${m}`));
+    if (missingLinks.length > 10) summary.push(`   ... + ${missingLinks.length - 10} innych`);
+  }
+  
+  if (ucancamMissing.length > 0) {
+    summary.push('');
+    summary.push(`⚠️ Brak linków UCANCAM (${ucancamMissing.length}):`);
+    ucancamMissing.slice(0, 10).forEach(u => {
+      summary.push(`   • ${u.name} (${u.type})`);
+    });
+    if (ucancamMissing.length > 10) {
+      summary.push(`   ... + ${ucancamMissing.length - 10} innych`);
+    }
+  }
+  
+  if (errors.length || ucancamErrors.length) {
+    summary.push('');
+    summary.push(`⚠️ Błędy (${errors.length + ucancamErrors.length}):`);
+    errors.slice(0, 5).forEach(e => summary.push(`   • ${e}`));
+    ucancamErrors.slice(0, 5).forEach(e => summary.push(`   • UCANCAM: ${e}`));
+    const totalErrors = errors.length + ucancamErrors.length;
+    if (totalErrors > 10) summary.push(`   ... + ${totalErrors - 10} innych`);
+  }
 
-    return { folderUrl, downloaded, missingLinks, errors };
+  if (ui) ui.alert('Zakończono', summary.join('\n'), ui.ButtonSet.OK);
+  else Logger.log(summary.join('\n'));
+
+  return { folderUrl, downloaded, missingLinks, errors, ucancamDownloaded, ucancamMissing, ucancamErrors };
 }
