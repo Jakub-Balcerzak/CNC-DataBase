@@ -294,3 +294,195 @@ function massCheckAndFixLinks() {
     ui.alert("✅ Wszystkie elementy mają spójne linki i zostały uzupełnione, jeśli brakowało.");
   }
 }
+
+/**
+ * Masowe sprawdzanie i synchronizacja linków UCANCAM dla modułów.
+ * - Szuka modułów (M..., X...) w arkuszach 'Moduły CNC' (kol. A) i 'Zestawy CNC' (kol. B)
+ * - Sprawdza kolumnę F (UCANCAM) dla każdego modułu
+ * - Uzupełnia puste komórki jeśli jest jeden spójny link
+ * - Pyta użytkownika w przypadku konfliktów
+ */
+function massCheckAndFixUcancamLinks() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  
+  const sheetModuly = ss.getSheetByName('Moduły CNC');
+  const sheetZestawy = ss.getSheetByName('Zestawy CNC');
+  
+  if (!sheetModuly || !sheetZestawy) {
+    ui.alert('Błąd', 'Brakuje arkuszy "Moduły CNC" lub "Zestawy CNC".', ui.ButtonSet.OK);
+    return;
+  }
+
+  // Kolumna F to index 5 (0-based)
+  const COL_UCANCAM = 5;
+  const COL_UCANCAM_LETTER = 'F';
+
+  // 1️⃣ Zbierz wszystkie wystąpienia modułów i ich linki UCANCAM
+  // Struktura: { "M1101": [ { sheet, row, link (richText URL lub null) }, ... ] }
+  const moduleLinks = {};
+
+  // Helper: sprawdza czy nazwa to moduł
+  function isModule(name) {
+    if (!name) return false;
+    return /^[MX]/i.test(String(name).trim());
+  }
+
+  // Helper: pobiera link z RichText lub null
+  function getRichLink(richCell) {
+    if (!richCell) return null;
+    try {
+      if (typeof richCell.getLinkUrl === 'function') {
+        return richCell.getLinkUrl() || null;
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  // Zbierz z arkusza 'Moduły CNC' - moduły są w kolumnie A (index 0)
+  const modData = sheetModuly.getDataRange().getValues();
+  const modRich = sheetModuly.getDataRange().getRichTextValues();
+  
+  for (let i = 1; i < modData.length; i++) { // pomijamy nagłówek
+    const moduleName = String(modData[i][0]).trim(); // kolumna A
+    if (!isModule(moduleName)) continue;
+    
+    const link = getRichLink(modRich[i][COL_UCANCAM]);
+    
+    if (!moduleLinks[moduleName]) moduleLinks[moduleName] = [];
+    moduleLinks[moduleName].push({
+      sheet: 'Moduły CNC',
+      row: i + 1,
+      col: COL_UCANCAM + 1, // 1-based dla getRange
+      link: link
+    });
+  }
+
+  // Zbierz z arkusza 'Zestawy CNC' - moduły mogą być w kolumnie B (index 1)
+  const zestData = sheetZestawy.getDataRange().getValues();
+  const zestRich = sheetZestawy.getDataRange().getRichTextValues();
+  
+  for (let i = 1; i < zestData.length; i++) { // pomijamy nagłówek
+    const cellValue = String(zestData[i][1]).trim(); // kolumna B
+    if (!isModule(cellValue)) continue;
+    
+    const link = getRichLink(zestRich[i][COL_UCANCAM]);
+    
+    if (!moduleLinks[cellValue]) moduleLinks[cellValue] = [];
+    moduleLinks[cellValue].push({
+      sheet: 'Zestawy CNC',
+      row: i + 1,
+      col: COL_UCANCAM + 1,
+      link: link
+    });
+  }
+
+  // 2️⃣ Sprawdź dla każdego modułu spójność linków
+  const inconsistencies = []; // różne linki dla tego samego modułu
+  const missingLinks = [];    // moduły bez żadnego linku UCANCAM
+  let autoFilledCount = 0;
+
+  for (const [moduleName, entries] of Object.entries(moduleLinks)) {
+    const uniqueLinks = [...new Set(entries.map(e => e.link).filter(l => !!l))];
+
+    if (uniqueLinks.length === 0) {
+      // Brak linku nigdzie
+      missingLinks.push({ name: moduleName, entries });
+    } else if (uniqueLinks.length === 1) {
+      // Jeden spójny link — uzupełnij puste komórki
+      const validLink = uniqueLinks[0];
+      for (const e of entries) {
+        if (!e.link) {
+          const sheet = ss.getSheetByName(e.sheet);
+          const cell = sheet.getRange(e.row, e.col);
+          const currentText = cell.getDisplayValue() || moduleName;
+          const richText = SpreadsheetApp.newRichTextValue()
+            .setText(currentText)
+            .setLinkUrl(validLink)
+            .build();
+          cell.setRichTextValue(richText);
+          autoFilledCount++;
+        }
+      }
+    } else {
+      // Więcej niż jeden unikalny link → konflikt
+      inconsistencies.push({ name: moduleName, uniqueLinks, entries });
+    }
+  }
+
+  // 3️⃣ Jeśli są konflikty — zapytaj użytkownika o każdy z nich
+  let fixedConflicts = 0;
+  if (inconsistencies.length > 0) {
+    for (const conflict of inconsistencies) {
+      const { name, uniqueLinks, entries } = conflict;
+      
+      // Przygotuj informację o lokalizacjach
+      let locationsInfo = entries.map(e => {
+        const linkInfo = e.link ? `ma link` : `BRAK linku`;
+        return `• ${e.sheet}!${COL_UCANCAM_LETTER}${e.row} (${linkInfo})`;
+      }).join('\n');
+      
+      let msg = `Moduł "${name}" ma różne linki UCANCAM:\n\n`;
+      uniqueLinks.forEach((l, i) => {
+        msg += `${i + 1}. ${l}\n`;
+      });
+      msg += `\nWystąpienia:\n${locationsInfo}\n`;
+      msg += `\nWpisz numer (1-${uniqueLinks.length}), który link ma być używany we wszystkich wystąpieniach:`;
+
+      const response = ui.prompt('Konflikt linków UCANCAM', msg, ui.ButtonSet.OK_CANCEL);
+      if (response.getSelectedButton() === ui.Button.OK) {
+        const userInput = response.getResponseText().trim();
+        const index = parseInt(userInput, 10);
+
+        if (!isNaN(index) && index >= 1 && index <= uniqueLinks.length) {
+          const chosenLink = uniqueLinks[index - 1];
+          
+          // Ustaw wybrany link we wszystkich wystąpieniach
+          for (const e of entries) {
+            const sheet = ss.getSheetByName(e.sheet);
+            const cell = sheet.getRange(e.row, e.col);
+            const currentText = cell.getDisplayValue() || name;
+            const richText = SpreadsheetApp.newRichTextValue()
+              .setText(currentText)
+              .setLinkUrl(chosenLink)
+              .build();
+            cell.setRichTextValue(richText);
+          }
+          fixedConflicts++;
+        } else {
+          ui.alert(`❌ Podano nieprawidłowy numer. Pomijam moduł "${name}".`);
+        }
+      }
+    }
+  }
+
+  // 4️⃣ Raport końcowy
+  const summaryLines = [];
+  
+  summaryLines.push(`📊 Sprawdzono ${Object.keys(moduleLinks).length} modułów.`);
+  
+  if (autoFilledCount > 0) {
+    summaryLines.push(`✅ Automatycznie uzupełniono ${autoFilledCount} pustych komórek UCANCAM.`);
+  }
+  
+  if (fixedConflicts > 0) {
+    summaryLines.push(`🔧 Naprawiono konflikty dla ${fixedConflicts} modułów.`);
+  }
+  
+  if (missingLinks.length > 0) {
+    summaryLines.push('');
+    summaryLines.push(`⚠️ Moduły bez linku UCANCAM (${missingLinks.length}):`);
+    missingLinks.slice(0, 20).forEach(m => {
+      summaryLines.push(`• ${m.name} (wystąpień: ${m.entries.length})`);
+    });
+    if (missingLinks.length > 20) {
+      summaryLines.push(`... i ${missingLinks.length - 20} innych`);
+    }
+  }
+  
+  if (inconsistencies.length === 0 && missingLinks.length === 0 && autoFilledCount === 0) {
+    summaryLines.push('✅ Wszystkie moduły mają spójne linki UCANCAM.');
+  }
+
+  ui.alert('Sprawdzenie UCANCAM zakończone', summaryLines.join('\n'), ui.ButtonSet.OK);
+}

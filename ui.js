@@ -12,6 +12,10 @@ function onOpen() {
     .addItem('Porównaj linki (SyncLinks)', 'promptAndCompareLinks')
     .addItem('Masowe sprawdzenie linków', 'massCheckAndFixLinks')
     .addToUi();
+
+  ui.createMenu('Sync CNC')
+    .addItem('Sprawdzenie plików UCANCAM', 'massCheckAndFixUcancamLinks')
+    .addToUi();
 }
 
 function promptAndDownloadWithColors() {
