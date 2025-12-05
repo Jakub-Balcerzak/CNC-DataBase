@@ -772,7 +772,93 @@ function startDownloadWithColors(colorMap, setId) {
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // PODSUMOWANIE
+  // GENEROWANIE PLIKU RAPORTU TXT
+  // ═══════════════════════════════════════════════════════════════════════════
+  
+  const reportLines = [];
+  reportLines.push(`RAPORT POBIERANIA - ${setId}`);
+  reportLines.push(`Data: ${new Date().toLocaleString('pl-PL')}`);
+  reportLines.push('═'.repeat(60));
+  reportLines.push('');
+  reportLines.push(`📁 Folder: ${folderUrl}`);
+  reportLines.push('');
+  
+  // Pobrane pliki DXF
+  reportLines.push(`📄 POBRANE PLIKI DXF: ${downloaded.length}`);
+  reportLines.push('-'.repeat(40));
+  if (downloaded.length > 0) {
+    // Grupuj wg kolorów
+    const byColor = {};
+    for (const d of downloaded) {
+      const c = d.color || 'Bez koloru';
+      if (!byColor[c]) byColor[c] = [];
+      byColor[c].push(d);
+    }
+    for (const color of Object.keys(byColor).sort()) {
+      reportLines.push(`  [${color}]`);
+      byColor[color].forEach(d => {
+        const countStr = d.count > 1 ? ` x${d.count}` : '';
+        const prettyStr = d.prettyName ? ` - ${d.prettyName}` : '';
+        const moduleStr = d.module ? ` (${d.module})` : '';
+        reportLines.push(`    • ${d.name}${prettyStr}${countStr}${moduleStr}`);
+      });
+    }
+  }
+  reportLines.push('');
+  
+  // Pobrane pliki UCANCAM
+  reportLines.push(`📦 POBRANE PLIKI UCANCAM: ${ucancamDownloaded.length}`);
+  reportLines.push('-'.repeat(40));
+  if (ucancamDownloaded.length > 0) {
+    ucancamDownloaded.forEach(u => {
+      reportLines.push(`  ✅ ${u.name} (${u.type}) → ${u.fileName}`);
+    });
+  }
+  reportLines.push('');
+  
+  // Brakujące linki DXF
+  if (missingLinks.length > 0) {
+    reportLines.push(`❌ BRAK HIPERŁĄCZY DXF: ${missingLinks.length}`);
+    reportLines.push('-'.repeat(40));
+    missingLinks.forEach(m => {
+      reportLines.push(`  • ${m}`);
+    });
+    reportLines.push('');
+  }
+  
+  // Brakujące linki UCANCAM
+  if (ucancamMissing.length > 0) {
+    reportLines.push(`⚠️ BRAK LINKÓW UCANCAM: ${ucancamMissing.length}`);
+    reportLines.push('-'.repeat(40));
+    ucancamMissing.forEach(u => {
+      reportLines.push(`  • ${u.name} (${u.type})`);
+    });
+    reportLines.push('');
+  }
+  
+  // Błędy
+  if (errors.length > 0 || ucancamErrors.length > 0) {
+    reportLines.push(`⚠️ BŁĘDY: ${errors.length + ucancamErrors.length}`);
+    reportLines.push('-'.repeat(40));
+    errors.forEach(e => {
+      reportLines.push(`  • ${e}`);
+    });
+    ucancamErrors.forEach(e => {
+      reportLines.push(`  • UCANCAM: ${e}`);
+    });
+    reportLines.push('');
+  }
+  
+  reportLines.push('═'.repeat(60));
+  reportLines.push(`Wygenerowano automatycznie przez Rejestr Plików CNC`);
+  
+  // Zapisz plik raportu
+  const reportFilename = `Raport_${setId}_${timestampForName()}.txt`;
+  const reportContent = reportLines.join('\n');
+  folder.createFile(reportFilename, reportContent, 'text/plain');
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PODSUMOWANIE (dialog)
   // ═══════════════════════════════════════════════════════════════════════════
   
   const summary = [];
