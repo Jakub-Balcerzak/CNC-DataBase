@@ -291,7 +291,82 @@ function downloadModuleFiles(modId) {
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // PODSUMOWANIE
+  // GENEROWANIE PLIKU RAPORTU TXT
+  // ═══════════════════════════════════════════════════════════════════════════
+  
+  const reportLines = [];
+  reportLines.push(`RAPORT POBIERANIA - Moduł ${modId}`);
+  reportLines.push(`Data: ${new Date().toLocaleString('pl-PL')}`);
+  reportLines.push('═'.repeat(60));
+  reportLines.push('');
+  reportLines.push(`📁 Folder: ${folderUrl}`);
+  reportLines.push('');
+  
+  // Pobrane pliki DXF
+  reportLines.push(`📄 POBRANE PLIKI DXF: ${downloaded.length}`);
+  reportLines.push('-'.repeat(40));
+  if (downloaded.length > 0) {
+    downloaded.forEach(d => {
+      const countStr = d.count > 1 ? ` x${d.count}` : '';
+      const prettyStr = d.prettyName ? ` - ${d.prettyName}` : '';
+      const surfaceStr = d.surface ? ` (${d.surface.toFixed(3)} m²)` : '';
+      reportLines.push(`  • ${d.name}${prettyStr}${countStr}${surfaceStr}`);
+    });
+  }
+  reportLines.push('');
+  
+  // Plik UCANCAM
+  reportLines.push(`📦 PLIK UCANCAM:`);
+  reportLines.push('-'.repeat(40));
+  if (ucancamDownloaded) {
+    reportLines.push(`  ✅ ${ucancamDownloaded}`);
+  } else if (ucancamError) {
+    reportLines.push(`  ❌ Błąd: ${ucancamError}`);
+  } else if (ucancamMissing) {
+    reportLines.push(`  ⚠️ Brak linku dla modułu ${modId}`);
+  }
+  reportLines.push('');
+  
+  // Brakujące linki DXF
+  if (missingLinks.length > 0) {
+    reportLines.push(`❌ BRAK HIPERŁĄCZY DXF: ${missingLinks.length}`);
+    reportLines.push('-'.repeat(40));
+    missingLinks.forEach(m => {
+      reportLines.push(`  • ${m}`);
+    });
+    reportLines.push('');
+  }
+  
+  // Błędy
+  if (errors.length > 0) {
+    reportLines.push(`⚠️ BŁĘDY: ${errors.length}`);
+    reportLines.push('-'.repeat(40));
+    errors.forEach(e => {
+      reportLines.push(`  • ${e}`);
+    });
+    reportLines.push('');
+  }
+  
+  // Ostrzeżenia dotyczące danych
+  if (dataWarnings.length > 0) {
+    reportLines.push(`⚠️ OSTRZEŻENIA DOTYCZĄCE DANYCH: ${dataWarnings.length}`);
+    reportLines.push('-'.repeat(40));
+    dataWarnings.forEach(w => {
+      reportLines.push(`  • ${w}`);
+    });
+    reportLines.push('');
+  }
+  
+  reportLines.push('═'.repeat(60));
+  reportLines.push(`Wygenerowano automatycznie przez Rejestr Plików CNC`);
+  
+  // Zapisz plik raportu
+  const reportFilename = `Raport_${modId}_${timestampForName()}.txt`;
+  const reportContent = reportLines.join('\n');
+  folder.createFile(reportFilename, reportContent, 'text/plain');
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PODSUMOWANIE (dialog)
   // ═══════════════════════════════════════════════════════════════════════════
 
   const summaryLines = [];
@@ -321,22 +396,25 @@ function downloadModuleFiles(modId) {
   if (missingLinks.length) {
     summaryLines.push('');
     summaryLines.push(`❌ Elementy bez hiperłącza DXF (${missingLinks.length}):`);
-    missingLinks.forEach(m => summaryLines.push(`   • ${m}`));
+    missingLinks.slice(0, 10).forEach(m => summaryLines.push(`   • ${m}`));
+    if (missingLinks.length > 10) summaryLines.push(`   ... + ${missingLinks.length - 10} innych`);
   }
   if (errors.length) {
     summaryLines.push('');
     summaryLines.push(`⚠️ Błędy (${errors.length}):`);
-    errors.forEach(err => summaryLines.push(`   • ${err}`));
+    errors.slice(0, 5).forEach(err => summaryLines.push(`   • ${err}`));
+    if (errors.length > 5) summaryLines.push(`   ... + ${errors.length - 5} innych`);
   }
   if (dataWarnings.length) {
     summaryLines.push('');
     summaryLines.push(`⚠️ Ostrzeżenia dotyczące danych (${dataWarnings.length}):`);
-    dataWarnings.forEach(w => summaryLines.push(`   • ${w}`));
+    dataWarnings.slice(0, 5).forEach(w => summaryLines.push(`   • ${w}`));
+    if (dataWarnings.length > 5) summaryLines.push(`   ... + ${dataWarnings.length - 5} innych`);
   }
 
   ui.alert('Pobieranie zakończone', summaryLines.join('\n'), ui.ButtonSet.OK);
 }
-
+  
 function processElementRecursive(name, providedRichLink, modulesMap, zestawyMap, visited, folder, downloaded, missingLinks, errors, multiplier = 1) {
   name = String(name).trim();
   if (!name) return;
