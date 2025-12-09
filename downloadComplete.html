@@ -1,0 +1,181 @@
+﻿<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <style>
+      body {
+        font-family: "Segoe UI", Arial, sans-serif;
+        margin: 20px;
+        line-height: 1.6;
+      }
+      h2 {
+        color: #1a73e8;
+        margin-bottom: 16px;
+      }
+      .folder-link {
+        display: inline-block;
+        background-color: #1a73e8;
+        color: white;
+        padding: 12px 24px;
+        margin: 16px 0;
+        border-radius: 4px;
+        text-decoration: none;
+        font-weight: bold;
+        transition: background-color 0.2s;
+      }
+      .folder-link:hover {
+        background-color: #0c5fca;
+      }
+      .folder-link:visited {
+        color: white;
+      }
+      .section {
+        margin: 16px 0;
+        padding: 12px;
+        background-color: #f8f9fa;
+        border-left: 4px solid #1a73e8;
+      }
+      .section h3 {
+        margin-top: 0;
+        color: #333;
+        font-size: 16px;
+      }
+      .list {
+        margin: 8px 0;
+        padding-left: 20px;
+      }
+      .list li {
+        margin: 4px 0;
+      }
+      .success { border-left-color: #34a853; }
+      .warning { border-left-color: #fbbc04; }
+      .error { border-left-color: #ea4335; }
+      .close-btn {
+        background-color: #5f6368;
+        color: white;
+        border: none;
+        padding: 10px 20px;
+        margin-top: 16px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+      }
+      .close-btn:hover {
+        background-color: #3c4043;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>✅ Pobieranie zakończone</h2>
+    
+    <div class="section success">
+      <h3>📁 Utworzony folder:</h3>
+      <a href="<?= folderUrl ?>" target="_blank" class="folder-link">
+        🔗 Otwórz folder na Google Drive
+      </a>
+    </div>
+
+    <? if (downloaded.length > 0) { ?>
+      <div class="section">
+        <h3>📄 Pobrane pliki DXF: <?= downloaded.length ?></h3>
+        <ul class="list">
+          <? for (let i = 0; i < Math.min(15, downloaded.length); i++) { 
+             const d = downloaded[i];
+             const surfaceStr = d.surface ? ` (${d.surface.toFixed(3)} m²)` : '';
+             const pretty = d.prettyName ? ` – ${d.prettyName}` : '';
+          ?>
+            <li><?= d.name ?><?= pretty ?><?= surfaceStr ?></li>
+          <? } ?>
+          <? if (downloaded.length > 15) { ?>
+            <li><em>... + <?= downloaded.length - 15 ?> innych</em></li>
+          <? } ?>
+        </ul>
+      </div>
+    <? } ?>
+
+    <? if (ucancamDownloaded && ucancamDownloaded.length > 0) { ?>
+      <div class="section success">
+        <h3>📦 Pobrane pliki UCANCAM: <?= ucancamDownloaded.length ?></h3>
+        <ul class="list">
+          <? for (let i = 0; i < Math.min(10, ucancamDownloaded.length); i++) { 
+             const u = ucancamDownloaded[i];
+             const sourceStr = u.source === 'zestaw' ? 'z zestawu' : u.source ? `z ${u.source}` : '';
+          ?>
+            <li>✅ <?= u.name ?> → <?= u.fileName ?> <?= sourceStr ? `(${sourceStr})` : '' ?></li>
+          <? } ?>
+          <? if (ucancamDownloaded.length > 10) { ?>
+            <li><em>... + <?= ucancamDownloaded.length - 10 ?> innych</em></li>
+          <? } ?>
+        </ul>
+      </div>
+    <? } ?>
+
+    <? if (missingLinks && missingLinks.length > 0) { ?>
+      <div class="section warning">
+        <h3>⚠️ Elementy bez hiperłącza DXF: <?= missingLinks.length ?></h3>
+        <ul class="list">
+          <? for (let i = 0; i < Math.min(10, missingLinks.length); i++) { ?>
+            <li><?= missingLinks[i] ?></li>
+          <? } ?>
+          <? if (missingLinks.length > 10) { ?>
+            <li><em>... + <?= missingLinks.length - 10 ?> innych</em></li>
+          <? } ?>
+        </ul>
+      </div>
+    <? } ?>
+
+    <? if (ucancamMissing && ucancamMissing.length > 0) { ?>
+      <div class="section warning">
+        <h3>⚠️ Brak linków UCANCAM: <?= ucancamMissing.length ?></h3>
+        <ul class="list">
+          <? for (let i = 0; i < Math.min(10, ucancamMissing.length); i++) { 
+             const u = ucancamMissing[i];
+             const sourceStr = u.source === 'zestaw' ? 'z zestawu' : u.source ? `z ${u.source}` : '';
+          ?>
+            <li><?= u.name ?> <?= sourceStr ? `(${sourceStr})` : '' ?></li>
+          <? } ?>
+          <? if (ucancamMissing.length > 10) { ?>
+            <li><em>... + <?= ucancamMissing.length - 10 ?> innych</em></li>
+          <? } ?>
+        </ul>
+      </div>
+    <? } ?>
+
+    <? if ((errors && errors.length > 0) || (ucancamErrors && ucancamErrors.length > 0)) { 
+       const totalErrors = (errors ? errors.length : 0) + (ucancamErrors ? ucancamErrors.length : 0);
+    ?>
+      <div class="section error">
+        <h3>❌ Błędy: <?= totalErrors ?></h3>
+        <ul class="list">
+          <? if (errors) { 
+             for (let i = 0; i < Math.min(5, errors.length); i++) { ?>
+               <li><?= errors[i] ?></li>
+          <? }} ?>
+          <? if (ucancamErrors) { 
+             for (let i = 0; i < Math.min(5, ucancamErrors.length); i++) { ?>
+               <li>UCANCAM: <?= ucancamErrors[i] ?></li>
+          <? }} ?>
+          <? if (totalErrors > 10) { ?>
+            <li><em>... + <?= totalErrors - 10 ?> innych</em></li>
+          <? } ?>
+        </ul>
+      </div>
+    <? } ?>
+
+    <? if (dataWarnings && dataWarnings.length > 0) { ?>
+      <div class="section warning">
+        <h3>⚠️ Ostrzeżenia dotyczące danych: <?= dataWarnings.length ?></h3>
+        <ul class="list">
+          <? for (let i = 0; i < Math.min(5, dataWarnings.length); i++) { ?>
+            <li><?= dataWarnings[i] ?></li>
+          <? } ?>
+          <? if (dataWarnings.length > 5) { ?>
+            <li><em>... + <?= dataWarnings.length - 5 ?> innych</em></li>
+          <? } ?>
+        </ul>
+      </div>
+    <? } ?>
+
+    <button class="close-btn" onclick="google.script.host.close()">Zamknij</button>
+  </body>
+</html>

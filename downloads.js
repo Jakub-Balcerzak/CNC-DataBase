@@ -389,66 +389,24 @@ function downloadModuleFiles(modId) {
   folder.createFile(reportFilename, reportContent, 'text/plain');
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // PODSUMOWANIE (dialog)
+  // PODSUMOWANIE (HTML dialog z klikalnym linkiem)
   // ═══════════════════════════════════════════════════════════════════════════
 
-  const summaryLines = [];
-  summaryLines.push(`📁 Utworzony folder:`);
-  summaryLines.push(folderUrl);
-  summaryLines.push('');
-  summaryLines.push(`📄 Pobrano plików DXF: ${downloaded.length}`);
-  if (downloaded.length) {
-    downloaded.slice(0, 15).forEach(d => {
-      const surfaceStr = d.surface ? ` (${d.surface.toFixed(3)} m²)` : '';
-      const pretty = d.prettyName ? ` – ${d.prettyName}` : '';
-      summaryLines.push(`   • ${d.name}${pretty}${surfaceStr}`);
-    });
-    if (downloaded.length > 15) summaryLines.push(`   ... + ${downloaded.length - 15} innych`);
-  }
-  
-  // Info o UCANCAM
-  summaryLines.push('');
-  if (ucancamDownloaded.length > 0) {
-    summaryLines.push(`📦 Pobrano plików UCANCAM: ${ucancamDownloaded.length}`);
-    ucancamDownloaded.slice(0, 10).forEach(u => {
-      summaryLines.push(`   ✅ ${u.name} → ${u.fileName}`);
-    });
-    if (ucancamDownloaded.length > 10) {
-      summaryLines.push(`   ... + ${ucancamDownloaded.length - 10} innych`);
-    }
-  }
-  
-  if (ucancamMissing.length > 0) {
-    summaryLines.push('');
-    summaryLines.push(`⚠️ Elementy bez linku UCANCAM (${ucancamMissing.length}):`);
-    ucancamMissing.slice(0, 10).forEach(m => summaryLines.push(`   • ${m}`));
-    if (ucancamMissing.length > 10) {
-      summaryLines.push(`   ... + ${ucancamMissing.length - 10} innych`);
-    }
-  }
-  
-  if (missingLinks.length) {
-    summaryLines.push('');
-    summaryLines.push(`❌ Elementy bez hiperłącza DXF (${missingLinks.length}):`);
-    missingLinks.slice(0, 10).forEach(m => summaryLines.push(`   • ${m}`));
-    if (missingLinks.length > 10) summaryLines.push(`   ... + ${missingLinks.length - 10} innych`);
-  }
-  if (errors.length || ucancamErrors.length) {
-    summaryLines.push('');
-    summaryLines.push(`⚠️ Błędy (${errors.length + ucancamErrors.length}):`);
-    errors.slice(0, 5).forEach(err => summaryLines.push(`   • ${err}`));
-    ucancamErrors.slice(0, 5).forEach(err => summaryLines.push(`   • UCANCAM: ${err}`));
-    const totalErrors = errors.length + ucancamErrors.length;
-    if (totalErrors > 10) summaryLines.push(`   ... + ${totalErrors - 10} innych`);
-  }
-  if (dataWarnings.length) {
-    summaryLines.push('');
-    summaryLines.push(`⚠️ Ostrzeżenia dotyczące danych (${dataWarnings.length}):`);
-    dataWarnings.slice(0, 5).forEach(w => summaryLines.push(`   • ${w}`));
-    if (dataWarnings.length > 5) summaryLines.push(`   ... + ${dataWarnings.length - 5} innych`);
-  }
+  const htmlTemplate = HtmlService.createTemplateFromFile('downloadComplete');
+  htmlTemplate.folderUrl = folderUrl;
+  htmlTemplate.downloaded = downloaded;
+  htmlTemplate.missingLinks = missingLinks;
+  htmlTemplate.errors = errors;
+  htmlTemplate.ucancamDownloaded = ucancamDownloaded;
+  htmlTemplate.ucancamMissing = ucancamMissing;
+  htmlTemplate.ucancamErrors = ucancamErrors;
+  htmlTemplate.dataWarnings = dataWarnings;
 
-  ui.alert('Pobieranie zakończone', summaryLines.join('\n'), ui.ButtonSet.OK);
+  const htmlOutput = htmlTemplate.evaluate()
+    .setWidth(700)
+    .setHeight(600);
+
+  ui.showModalDialog(htmlOutput, `Pobieranie zakończone - Moduł ${modId}`);
 }
   
 function processElementRecursive(name, providedRichLink, modulesMap, zestawyMap, visited, folder, downloaded, missingLinks, errors, multiplier = 1) {
@@ -973,29 +931,9 @@ function startDownloadWithColors(colorMap, setId) {
   if (ucancamMissing.length > 0) {
     reportLines.push(`⚠️ BRAK LINKÓW UCANCAM: ${ucancamMissing.length}`);
     reportLines.push('-'.repeat(40));
-    
-    // Grupuj według źródła
-    const missingBySource = {};
-    for (const u of ucancamMissing) {
-      const src = u.source || 'nieznane';
-      if (!missingBySource[src]) missingBySource[src] = [];
-      missingBySource[src].push(u.name);
-    }
-    
-    if (missingBySource['zestaw']) {
-      reportLines.push(`  [Z zestawu]`);
-      missingBySource['zestaw'].forEach(n => {
-        reportLines.push(`    • ${n}`);
-      });
-      delete missingBySource['zestaw'];
-    }
-    
-    for (const src of Object.keys(missingBySource).sort()) {
-      reportLines.push(`  [Z modułu: ${src}]`);
-      missingBySource[src].forEach(n => {
-        reportLines.push(`    • ${n}`);
-      });
-    }
+    ucancamMissing.forEach(m => {
+      reportLines.push(`  • ${m}`);
+    });
     reportLines.push('');
   }
   
@@ -1008,6 +946,16 @@ function startDownloadWithColors(colorMap, setId) {
     });
     ucancamErrors.forEach(e => {
       reportLines.push(`  • UCANCAM: ${e}`);
+    });
+    reportLines.push('');
+  }
+  
+  // Ostrzeżenia dotyczące danych
+  if (dataWarnings.length > 0) {
+    reportLines.push(`⚠️ OSTRZEŻENIA DOTYCZĄCE DANYCH: ${dataWarnings.length}`);
+    reportLines.push('-'.repeat(40));
+    dataWarnings.forEach(w => {
+      reportLines.push(`  • ${w}`);
     });
     reportLines.push('');
   }
