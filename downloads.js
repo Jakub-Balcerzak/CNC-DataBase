@@ -319,9 +319,10 @@ function downloadModuleFiles(modId) {
   reportLines.push('-'.repeat(40));
   if (downloaded.length > 0) {
     downloaded.forEach(d => {
-      const countStr = d.count > 1 ? ` x${d.count}` : '';
+      const countStr = ` → ilość: x${d.count || 1}`;
       const prettyStr = d.prettyName ? ` - ${d.prettyName}` : '';
       const surfaceStr = d.surface ? ` (${d.surface.toFixed(3)} m²)` : '';
+
       reportLines.push(`  • ${d.name}${prettyStr}${countStr}${surfaceStr}`);
     });
   }
@@ -738,7 +739,7 @@ function startDownloadWithColors(colorMap, setId) {
     for (const color of Object.keys(byColor).sort()) {
       reportLines.push(`  [${color}]`);
       byColor[color].forEach(d => {
-        const countStr = d.count > 1 ? ` x${d.count}` : '';
+        const countStr = ` → ilość: x${d.count || 1}`;
         const prettyStr = d.prettyName ? ` - ${d.prettyName}` : '';
         const moduleStr = d.module ? ` (${d.module})` : '';
         reportLines.push(`    • ${d.name}${prettyStr}${countStr}${moduleStr}`);
@@ -780,7 +781,7 @@ function startDownloadWithColors(colorMap, setId) {
   
   // Brakujące linki DXF
   if (missingLinks.length > 0) {
-    reportLines.push(`❌ BRAK HIPERŁĄCZY DXF: ${missingLinks.length}`);
+    reportLines.push(`❌ BRAK HIPERŁąCZY DXF: ${missingLinks.length}`);
     reportLines.push('-'.repeat(40));
     missingLinks.forEach(m => {
       reportLines.push(`  • ${m}`);
