@@ -408,162 +408,6 @@ function downloadModuleFiles(modId) {
 
   ui.showModalDialog(htmlOutput, `Pobieranie zakończone - Moduł ${modId}`);
 }
-  
-function processElementRecursive(name, providedRichLink, modulesMap, zestawyMap, visited, folder, downloaded, missingLinks, errors, multiplier = 1) {
-  name = String(name).trim();
-  if (!name) return;
-
-  if (isModuleName(name)) {
-    if (visited[name]) return;
-    visited[name] = true;
-
-    const children = modulesMap[name];
-    if (!children || children.length === 0) {
-      missingLinks.push(`Moduł ${name} - brak wpisów w "${SHEET_MODULE}"`);
-      return;
-    }
-
-    for (let ch of children) {
-      const childMultiplier = multiplier * (ch.count || 1);
-      processElementRecursive(ch.text, ch.richLink, modulesMap, zestawyMap, visited, folder, downloaded, missingLinks, errors, childMultiplier);
-    }
-    return;
-  }
-
-  let link = providedRichLink || findLinkForElement(name, modulesMap, zestawyMap);
-  if (!link) {
-    missingLinks.push(name);
-    return;
-  }
-
-  const elementData = findElementData(name, modulesMap, zestawyMap);
-  const elementCountFromSheet = (function() {
-    for (let key in modulesMap) {
-      for (const e of modulesMap[key]) {
-        if (e.text === name) return (e.count || 1);
-      }
-    }
-    for (let key in zestawyMap) {
-      for (const e of zestawyMap[key]) {
-        if (e.text === name) return (e.count || 1);
-      }
-    }
-    return 1;
-  })();
-
-  const effectiveCount = multiplier * elementCountFromSheet;
-
-  try {
-    let fileIdMatch = link.match(/[-\w]{25,}/);
-    let directLink = link;
-    if (fileIdMatch) {
-      directLink = `https://drive.google.com/uc?export=download&id=${fileIdMatch[0]}`;
-    }
-
-    const resp = UrlFetchApp.fetch(directLink, { muteHttpExceptions: true });
-    const code = resp.getResponseCode();
-    if (code < 200 || code >= 300) {
-      errors.push(`${name}: błąd HTTP ${code} przy pobieraniu ${directLink}`);
-      return;
-    }
-
-    let blob = resp.getBlob();
-    const fileName = sanitizeFileName(name) + '.dxf';
-    blob.setName(fileName);
-
-    const existing = downloaded.find(d => d.name === name);
-    if (!existing) {
-      folder.createFile(blob);
-      downloaded.push({
-        name: name,
-        url: directLink,
-        fileId: fileIdMatch ? fileIdMatch[0] : 'unknown',
-        prettyName: elementData?.name || '',
-        surface: elementData?.surface || null,
-        count: effectiveCount
-      });
-    } else {
-      existing.count = (existing.count || 0) + effectiveCount;
-    }
-
-  } catch (e) {
-    errors.push(`${name}: ${e.message}`);
-  }
-}
-
-function processElementRecursiveWithColor(name, providedRichLink, modulesMap, zestawyMap, visited, folder, downloaded, missingLinks, errors, colorMap, multiplier = 1) {
-  name = String(name).trim();
-  if (!name) return;
-
-  if (isModuleName(name)) {
-    if (visited[name]) return;
-    visited[name] = true;
-
-    const children = modulesMap[name];
-    if (!children || children.length === 0) {
-      missingLinks.push(`Moduł ${name} - brak wpisów w "${SHEET_MODULE}"`);
-      return;
-    }
-
-    for (let ch of children) {
-      const childMultiplier = multiplier * (ch.count || 1);
-      processElementRecursiveWithColor(ch.text, ch.richLink, modulesMap, zestawyMap, visited, folder, downloaded, missingLinks, errors, colorMap, childMultiplier);
-    }
-    return;
-  }
-
-  const link = providedRichLink || findLinkForElement(name, modulesMap, zestawyMap);
-  if (!link) {
-    missingLinks.push(name);
-    return;
-  }
-
-  try {
-    const elementData = findElementData(name, modulesMap, zestawyMap);
-    const elementCountFromSheet = (function() {
-      for (let key in modulesMap) {
-        for (const e of modulesMap[key]) {
-          if (e.text === name) return (e.count || 1);
-        }
-      }
-      for (let key in zestawyMap) {
-        for (const e of zestawyMap[key]) {
-          if (e.text === name) return (e.count || 1);
-        }
-      }
-      return 1;
-    })();
-
-    const effectiveCount = multiplier * elementCountFromSheet;
-
-    const fileIdMatch = link.match(/[-\w]{25,}/);
-    const directLink = fileIdMatch ? `https://drive.google.com/uc?export=download&id=${fileIdMatch[0]}` : link;
-    const resp = UrlFetchApp.fetch(directLink, { muteHttpExceptions: true });
-    const code = resp.getResponseCode();
-    if (code < 200 || code >= 300) {
-      errors.push(`${name}: błąd HTTP ${code} przy pobieraniu ${directLink}`);
-      return;
-    }
-
-    const blob = resp.getBlob();
-    const fileName = sanitizeFileName(name) + '.dxf';
-    blob.setName(fileName);
-
-    const color = colorMap[name] || 'Bez koloru';
-    const colorFolder = getOrCreateSubfolder(folder, color);
-
-    const existing = downloaded.find(d => d.name === name && d.color === color);
-    if (!existing) {
-      colorFolder.createFile(blob);
-      downloaded.push({ name: name, color: color, prettyName: elementData?.name || '', count: effectiveCount });
-    } else {
-      existing.count = (existing.count || 0) + effectiveCount;
-    }
-
-  } catch (e) {
-    errors.push(`${name}: ${e.message}`);
-  }
-}
 
 function startDownloadWithColors(colorMap, setId) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -770,18 +614,77 @@ function startDownloadWithColors(colorMap, setId) {
   let ucancamFolder = null;
   const processedUcancam = new Set(); // unikaj duplikatów
 
-  // 5a) Pobierz UCANCAM dla ELEMENTÓW bezpośrednio w zestawie (z arkusza Zestawy CNC)
+  // ═══ OPTYMALIZACJA: Preindeksuj wiersze według ID ═══
+  const zestIndexBySetId = {}; // { "P1608": [rowIndex1, rowIndex2, ...] }
   for (let i = 1; i < zestValues.length; i++) {
     const rowSetId = String(zestValues[i][0]).trim();
+    if (!rowSetId) continue;
+    if (!zestIndexBySetId[rowSetId]) zestIndexBySetId[rowSetId] = [];
+    zestIndexBySetId[rowSetId].push(i);
+  }
+
+  const modIndexByModId = {}; // { "M1201": [rowIndex1, rowIndex2, ...] }
+  for (let i = 1; i < modValues.length; i++) {
+    const rowModId = String(modValues[i][0]).trim();
+    if (!rowModId) continue;
+    if (!modIndexByModId[rowModId]) modIndexByModId[rowModId] = [];
+    modIndexByModId[rowModId].push(i);
+  }
+
+  // 5a) Pobierz UCANCAM dla ELEMENTÓW bezpośrednio w zestawie (z arkusza Zestawy CNC)
+  const setRows = zestIndexBySetId[setId] || [];
+  for (const i of setRows) {
     const elementName = String(zestValues[i][COL_ELEMENT]).trim();
     
-    // Sprawdź czy to wiersz z naszego zestawu i czy to element (nie moduł)
-    if (rowSetId === setId && elementName && !isModuleName(elementName)) {
+    // Sprawdź czy to element (nie moduł)
+    if (!elementName || isModuleName(elementName)) continue;
+    
+    // Sprawdź czy już przetworzono ten element
+    if (processedUcancam.has(elementName)) continue;
+    processedUcancam.add(elementName);
+    
+    const ucancamLink = getRichLink(zestRich[i][COL_UCANCAM]);
+    
+    if (ucancamLink) {
+      try {
+        const fileIdMatch = ucancamLink.match(/[-\w]{25,}/);
+        if (fileIdMatch) {
+          const fileId = fileIdMatch[0];
+          const sourceFile = DriveApp.getFileById(fileId);
+          const originalFileName = sourceFile.getName();
+          
+          if (!ucancamFolder) {
+            ucancamFolder = folder.createFolder('UCANCAM');
+          }
+          
+          sourceFile.makeCopy(originalFileName, ucancamFolder);
+          ucancamDownloaded.push({ name: elementName, fileName: originalFileName, type: 'element', source: 'zestaw' });
+        } else {
+          ucancamErrors.push(`${elementName}: nieprawidłowy format linku`);
+        }
+      } catch (e) {
+        ucancamErrors.push(`${elementName}: ${e.message}`);
+      }
+    } else {
+      ucancamMissing.push({ name: elementName, type: 'element', source: 'zestaw' });
+    }
+  }
+
+  // 5b) Pobierz UCANCAM dla wszystkich ELEMENTÓW z MODUŁÓW użytych w zestawie
+  for (const modName of usedModules) {
+    const modRows = modIndexByModId[modName] || [];
+    
+    for (const i of modRows) {
+      const elementName = String(modValues[i][COL_ELEMENT]).trim();
+      
+      // Sprawdź czy jest element (nie moduł)
+      if (!elementName || isModuleName(elementName)) continue;
+      
       // Sprawdź czy już przetworzono ten element
       if (processedUcancam.has(elementName)) continue;
       processedUcancam.add(elementName);
       
-      const ucancamLink = getRichLink(zestRich[i][COL_UCANCAM]);
+      const ucancamLink = getRichLink(modRich[i][COL_UCANCAM]);
       
       if (ucancamLink) {
         try {
@@ -796,57 +699,15 @@ function startDownloadWithColors(colorMap, setId) {
             }
             
             sourceFile.makeCopy(originalFileName, ucancamFolder);
-            ucancamDownloaded.push({ name: elementName, fileName: originalFileName, type: 'element', source: 'zestaw' });
+            ucancamDownloaded.push({ name: elementName, fileName: originalFileName, type: 'element', source: modName });
           } else {
-            ucancamErrors.push(`${elementName}: nieprawidłowy format linku`);
+            ucancamErrors.push(`${elementName} (z ${modName}): nieprawidłowy format linku`);
           }
         } catch (e) {
-          ucancamErrors.push(`${elementName}: ${e.message}`);
+          ucancamErrors.push(`${elementName} (z ${modName}): ${e.message}`);
         }
       } else {
-        ucancamMissing.push({ name: elementName, type: 'element', source: 'zestaw' });
-      }
-    }
-  }
-
-  // 5b) Pobierz UCANCAM dla wszystkich ELEMENTÓW z MODUŁÓW użytych w zestawie
-  for (const modName of usedModules) {
-    // Szukaj wszystkich elementów w module
-    for (let i = 1; i < modValues.length; i++) {
-      const rowModName = String(modValues[i][0]).trim();
-      const elementName = String(modValues[i][COL_ELEMENT]).trim();
-      
-      // Sprawdź czy to wiersz z tego modułu i czy jest element (nie moduł)
-      if (rowModName === modName && elementName && !isModuleName(elementName)) {
-        // Sprawdź czy już przetworzono ten element
-        if (processedUcancam.has(elementName)) continue;
-        processedUcancam.add(elementName);
-        
-        const ucancamLink = getRichLink(modRich[i][COL_UCANCAM]);
-        
-        if (ucancamLink) {
-          try {
-            const fileIdMatch = ucancamLink.match(/[-\w]{25,}/);
-            if (fileIdMatch) {
-              const fileId = fileIdMatch[0];
-              const sourceFile = DriveApp.getFileById(fileId);
-              const originalFileName = sourceFile.getName();
-              
-              if (!ucancamFolder) {
-                ucancamFolder = folder.createFolder('UCANCAM');
-              }
-              
-              sourceFile.makeCopy(originalFileName, ucancamFolder);
-              ucancamDownloaded.push({ name: elementName, fileName: originalFileName, type: 'element', source: modName });
-            } else {
-              ucancamErrors.push(`${elementName} (z ${modName}): nieprawidłowy format linku`);
-            }
-          } catch (e) {
-            ucancamErrors.push(`${elementName} (z ${modName}): ${e.message}`);
-          }
-        } else {
-          ucancamMissing.push({ name: elementName, type: 'element', source: modName });
-        }
+        ucancamMissing.push({ name: elementName, type: 'element', source: modName });
       }
     }
   }
@@ -931,9 +792,29 @@ function startDownloadWithColors(colorMap, setId) {
   if (ucancamMissing.length > 0) {
     reportLines.push(`⚠️ BRAK LINKÓW UCANCAM: ${ucancamMissing.length}`);
     reportLines.push('-'.repeat(40));
-    ucancamMissing.forEach(m => {
-      reportLines.push(`  • ${m}`);
-    });
+    
+    // Grupuj według źródła
+    const missingBySource = {};
+    for (const u of ucancamMissing) {
+      const src = u.source || 'nieznane';
+      if (!missingBySource[src]) missingBySource[src] = [];
+      missingBySource[src].push(u.name);
+    }
+    
+    if (missingBySource['zestaw']) {
+      reportLines.push(`  [Z zestawu]`);
+      missingBySource['zestaw'].forEach(n => {
+        reportLines.push(`    • ${n}`);
+      });
+      delete missingBySource['zestaw'];
+    }
+    
+    for (const src of Object.keys(missingBySource).sort()) {
+      reportLines.push(`  [Z modułu: ${src}]`);
+      missingBySource[src].forEach(n => {
+        reportLines.push(`    • ${n}`);
+      });
+    }
     reportLines.push('');
   }
   
@@ -950,16 +831,6 @@ function startDownloadWithColors(colorMap, setId) {
     reportLines.push('');
   }
   
-  // Ostrzeżenia dotyczące danych
-  if (dataWarnings.length > 0) {
-    reportLines.push(`⚠️ OSTRZEŻENIA DOTYCZĄCE DANYCH: ${dataWarnings.length}`);
-    reportLines.push('-'.repeat(40));
-    dataWarnings.forEach(w => {
-      reportLines.push(`  • ${w}`);
-    });
-    reportLines.push('');
-  }
-  
   reportLines.push('═'.repeat(60));
   reportLines.push(`Wygenerowano automatycznie przez Rejestr Plików CNC`);
   
@@ -969,85 +840,25 @@ function startDownloadWithColors(colorMap, setId) {
   folder.createFile(reportFilename, reportContent, 'text/plain');
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // PODSUMOWANIE (dialog)
+  // PODSUMOWANIE (HTML dialog z klikalnym linkiem)
   // ═══════════════════════════════════════════════════════════════════════════
   
-  const summary = [];
-  summary.push(`📁 Folder: ${folderUrl}`);
-  summary.push('');
-  summary.push(`📄 Pobrano plików DXF: ${downloaded.length}`);
-  
-  // Info o UCANCAM
-  if (ucancamDownloaded.length > 0) {
-    summary.push('');
-    summary.push(`📦 Pobrano plików UCANCAM: ${ucancamDownloaded.length}`);
-    
-    // Pokaż pierwsze 10, grupując według źródła
-    const bySource = {};
-    for (const u of ucancamDownloaded) {
-      const src = u.source || 'nieznane';
-      if (!bySource[src]) bySource[src] = [];
-      bySource[src].push(u);
-    }
-    
-    let shown = 0;
-    const maxShow = 10;
-    
-    if (bySource['zestaw']) {
-      summary.push('   [Z zestawu]');
-      for (const u of bySource['zestaw']) {
-        if (shown >= maxShow) break;
-        summary.push(`     ✅ ${u.name} → ${u.fileName}`);
-        shown++;
-      }
-      delete bySource['zestaw'];
-    }
-    
-    for (const src of Object.keys(bySource).sort()) {
-      if (shown >= maxShow) break;
-      summary.push(`   [Z modułu: ${src}]`);
-      for (const u of bySource[src]) {
-        if (shown >= maxShow) break;
-        summary.push(`     ✅ ${u.name} → ${u.fileName}`);
-        shown++;
-      }
-    }
-    
-    if (ucancamDownloaded.length > maxShow) {
-      summary.push(`   ... + ${ucancamDownloaded.length - maxShow} innych`);
-    }
-  }
-  
-  if (missingLinks.length) {
-    summary.push('');
-    summary.push(`❌ Brak hiperłączy DXF (${missingLinks.length}):`);
-    missingLinks.slice(0, 10).forEach(m => summary.push(`   • ${m}`));
-    if (missingLinks.length > 10) summary.push(`   ... + ${missingLinks.length - 10} innych`);
-  }
-  
-  if (ucancamMissing.length > 0) {
-    summary.push('');
-    summary.push(`⚠️ Brak linków UCANCAM (${ucancamMissing.length}):`);
-    ucancamMissing.slice(0, 10).forEach(u => {
-      const sourceStr = u.source === 'zestaw' ? 'z zestawu' : `z ${u.source}`;
-      summary.push(`   • ${u.name} (${sourceStr})`);
-    });
-    if (ucancamMissing.length > 10) {
-      summary.push(`   ... + ${ucancamMissing.length - 10} innych`);
-    }
-  }
-  
-  if (errors.length || ucancamErrors.length) {
-    summary.push('');
-    summary.push(`⚠️ Błędy (${errors.length + ucancamErrors.length}):`);
-    errors.slice(0, 5).forEach(e => summary.push(`   • ${e}`));
-    ucancamErrors.slice(0, 5).forEach(e => summary.push(`   • UCANCAM: ${e}`));
-    const totalErrors = errors.length + ucancamErrors.length;
-    if (totalErrors > 10) summary.push(`   ... + ${totalErrors - 10} innych`);
-  }
+  const htmlTemplate = HtmlService.createTemplateFromFile('downloadComplete');
+  htmlTemplate.folderUrl = folderUrl;
+  htmlTemplate.downloaded = downloaded;
+  htmlTemplate.missingLinks = missingLinks;
+  htmlTemplate.errors = errors;
+  htmlTemplate.ucancamDownloaded = ucancamDownloaded;
+  htmlTemplate.ucancamMissing = ucancamMissing;
+  htmlTemplate.ucancamErrors = ucancamErrors;
+  htmlTemplate.dataWarnings = []; // nie ma dataWarnings dla zestawów
 
-  if (ui) ui.alert('Zakończono', summary.join('\n'), ui.ButtonSet.OK);
-  else Logger.log(summary.join('\n'));
+  const htmlOutput = htmlTemplate.evaluate()
+    .setWidth(700)
+    .setHeight(600);
+
+  if (ui) ui.showModalDialog(htmlOutput, `Pobieranie zakończone - ${setId}`);
+  else Logger.log('Zakończono pobieranie dla ' + setId);
 
   return { folderUrl, downloaded, missingLinks, errors, ucancamDownloaded, ucancamMissing, ucancamErrors };
 }
