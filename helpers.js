@@ -24,7 +24,7 @@ function buildMapForSheet(values, richValues, idxKeyCol, idxDataCol, sheetName) 
     }
 
     const surface = values[r][4] ? Number(values[r][4]) : null;  // kol. E
-    const name = values[r][6] ? String(values[r][6]).trim() : ''; // kol. G
+    const name = values[r][7] ? String(values[r][7]).trim() : ''; // kol. H (była G)
 
     let count = 1;
     try {
