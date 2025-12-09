@@ -239,55 +239,67 @@ function downloadModuleFiles(modId) {
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // POBIERANIE PLIKU UCANCAM
+  // POBIERANIE PLIKÓW UCANCAM DLA ELEMENTÓW
   // ═══════════════════════════════════════════════════════════════════════════
   
-  const COL_UCANCAM = 5; // kolumna F (0-based index)
-  let ucancamDownloaded = null;
-  let ucancamError = null;
-  let ucancamMissing = false;
-
-  // Szukaj linku UCANCAM dla modułu w arkuszu 'Moduły CNC'
-  // Bierzemy pierwszy znaleziony wiersz z tym modułem
-  let ucancamLink = null;
-  for (let i = 1; i < modValues.length; i++) {
-    const rowModName = String(modValues[i][0]).trim();
-    if (rowModName === modId) {
-      // Sprawdź czy jest link w kolumnie F
-      try {
-        const richCell = modRich[i][COL_UCANCAM];
-        if (richCell && typeof richCell.getLinkUrl === 'function') {
-          ucancamLink = richCell.getLinkUrl() || null;
-        }
-      } catch (e) {
-        ucancamLink = null;
+  const COL_ELEMENT = 1; // kolumna B (0-based)
+  const COL_UCANCAM = 5; // kolumna F (0-based)
+  
+  // Helper: pobiera link z RichText lub null
+  function getRichLink(richCell) {
+    if (!richCell) return null;
+    try {
+      if (typeof richCell.getLinkUrl === 'function') {
+        return richCell.getLinkUrl() || null;
       }
-      if (ucancamLink) break; // znaleziono link, przerywamy
-    }
+    } catch (e) {}
+    return null;
   }
 
-  if (ucancamLink) {
-    try {
-      const fileIdMatch = ucancamLink.match(/[-\w]{25,}/);
-      if (fileIdMatch) {
-        const fileId = fileIdMatch[0];
-        const sourceFile = DriveApp.getFileById(fileId);
-        const originalFileName = sourceFile.getName();
-        
-        // Utwórz podfolder UCANCAM
-        const ucancamFolder = folder.createFolder('UCANCAM');
-        
-        // Skopiuj plik z oryginalną nazwą
-        sourceFile.makeCopy(originalFileName, ucancamFolder);
-        ucancamDownloaded = originalFileName;
+  const ucancamDownloaded = [];
+  const ucancamMissing = [];
+  const ucancamErrors = [];
+  let ucancamFolder = null;
+  const processedElements = new Set(); // unikaj duplikatów
+
+  // Szukaj wszystkich elementów w module i pobierz ich pliki UCANCAM
+  for (let i = 1; i < modValues.length; i++) {
+    const rowModName = String(modValues[i][0]).trim();
+    const elementName = String(modValues[i][COL_ELEMENT]).trim();
+    
+    // Sprawdź czy to wiersz z naszego modułu i czy jest element (nie moduł)
+    if (rowModName === modId && elementName && !isModuleName(elementName)) {
+      // Sprawdź czy już przetworzono ten element
+      if (processedElements.has(elementName)) continue;
+      processedElements.add(elementName);
+      
+      const ucancamLink = getRichLink(modRich[i][COL_UCANCAM]);
+      
+      if (ucancamLink) {
+        try {
+          const fileIdMatch = ucancamLink.match(/[-\w]{25,}/);
+          if (fileIdMatch) {
+            const fileId = fileIdMatch[0];
+            const sourceFile = DriveApp.getFileById(fileId);
+            const originalFileName = sourceFile.getName();
+            
+            // Utwórz podfolder UCANCAM jeśli nie istnieje
+            if (!ucancamFolder) {
+              ucancamFolder = folder.createFolder('UCANCAM');
+            }
+            
+            sourceFile.makeCopy(originalFileName, ucancamFolder);
+            ucancamDownloaded.push({ name: elementName, fileName: originalFileName });
+          } else {
+            ucancamErrors.push(`${elementName}: nieprawidłowy format linku`);
+          }
+        } catch (e) {
+          ucancamErrors.push(`${elementName}: ${e.message}`);
+        }
       } else {
-        ucancamError = 'Nieprawidłowy format linku UCANCAM';
+        ucancamMissing.push(elementName);
       }
-    } catch (e) {
-      ucancamError = e.message;
     }
-  } else {
-    ucancamMissing = true;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -315,15 +327,13 @@ function downloadModuleFiles(modId) {
   }
   reportLines.push('');
   
-  // Plik UCANCAM
-  reportLines.push(`📦 PLIK UCANCAM:`);
+  // Pobrane pliki UCANCAM
+  reportLines.push(`📦 POBRANE PLIKI UCANCAM: ${ucancamDownloaded.length}`);
   reportLines.push('-'.repeat(40));
-  if (ucancamDownloaded) {
-    reportLines.push(`  ✅ ${ucancamDownloaded}`);
-  } else if (ucancamError) {
-    reportLines.push(`  ❌ Błąd: ${ucancamError}`);
-  } else if (ucancamMissing) {
-    reportLines.push(`  ⚠️ Brak linku dla modułu ${modId}`);
+  if (ucancamDownloaded.length > 0) {
+    ucancamDownloaded.forEach(u => {
+      reportLines.push(`  ✅ ${u.name} → ${u.fileName}`);
+    });
   }
   reportLines.push('');
   
@@ -337,12 +347,25 @@ function downloadModuleFiles(modId) {
     reportLines.push('');
   }
   
+  // Brakujące linki UCANCAM
+  if (ucancamMissing.length > 0) {
+    reportLines.push(`⚠️ BRAK LINKÓW UCANCAM: ${ucancamMissing.length}`);
+    reportLines.push('-'.repeat(40));
+    ucancamMissing.forEach(m => {
+      reportLines.push(`  • ${m}`);
+    });
+    reportLines.push('');
+  }
+  
   // Błędy
-  if (errors.length > 0) {
-    reportLines.push(`⚠️ BŁĘDY: ${errors.length}`);
+  if (errors.length > 0 || ucancamErrors.length > 0) {
+    reportLines.push(`⚠️ BŁĘDY: ${errors.length + ucancamErrors.length}`);
     reportLines.push('-'.repeat(40));
     errors.forEach(e => {
       reportLines.push(`  • ${e}`);
+    });
+    ucancamErrors.forEach(e => {
+      reportLines.push(`  • UCANCAM: ${e}`);
     });
     reportLines.push('');
   }
@@ -385,12 +408,23 @@ function downloadModuleFiles(modId) {
   
   // Info o UCANCAM
   summaryLines.push('');
-  if (ucancamDownloaded) {
-    summaryLines.push(`📦 UCANCAM: ✅ ${ucancamDownloaded}`);
-  } else if (ucancamError) {
-    summaryLines.push(`📦 UCANCAM: ❌ Błąd - ${ucancamError}`);
-  } else if (ucancamMissing) {
-    summaryLines.push(`📦 UCANCAM: ⚠️ Brak linku dla modułu ${modId}`);
+  if (ucancamDownloaded.length > 0) {
+    summaryLines.push(`📦 Pobrano plików UCANCAM: ${ucancamDownloaded.length}`);
+    ucancamDownloaded.slice(0, 10).forEach(u => {
+      summaryLines.push(`   ✅ ${u.name} → ${u.fileName}`);
+    });
+    if (ucancamDownloaded.length > 10) {
+      summaryLines.push(`   ... + ${ucancamDownloaded.length - 10} innych`);
+    }
+  }
+  
+  if (ucancamMissing.length > 0) {
+    summaryLines.push('');
+    summaryLines.push(`⚠️ Elementy bez linku UCANCAM (${ucancamMissing.length}):`);
+    ucancamMissing.slice(0, 10).forEach(m => summaryLines.push(`   • ${m}`));
+    if (ucancamMissing.length > 10) {
+      summaryLines.push(`   ... + ${ucancamMissing.length - 10} innych`);
+    }
   }
   
   if (missingLinks.length) {
@@ -399,11 +433,13 @@ function downloadModuleFiles(modId) {
     missingLinks.slice(0, 10).forEach(m => summaryLines.push(`   • ${m}`));
     if (missingLinks.length > 10) summaryLines.push(`   ... + ${missingLinks.length - 10} innych`);
   }
-  if (errors.length) {
+  if (errors.length || ucancamErrors.length) {
     summaryLines.push('');
-    summaryLines.push(`⚠️ Błędy (${errors.length}):`);
+    summaryLines.push(`⚠️ Błędy (${errors.length + ucancamErrors.length}):`);
     errors.slice(0, 5).forEach(err => summaryLines.push(`   • ${err}`));
-    if (errors.length > 5) summaryLines.push(`   ... + ${errors.length - 5} innych`);
+    ucancamErrors.slice(0, 5).forEach(err => summaryLines.push(`   • UCANCAM: ${err}`));
+    const totalErrors = errors.length + ucancamErrors.length;
+    if (totalErrors > 10) summaryLines.push(`   ... + ${totalErrors - 10} innych`);
   }
   if (dataWarnings.length) {
     summaryLines.push('');
@@ -578,6 +614,7 @@ function startDownloadWithColors(colorMap, setId) {
   const sheetMod = ss.getSheetByName(SHEET_MODULE);
 
   const COL_UCANCAM = 5; // kolumna F (0-based index)
+  const COL_ELEMENT = 1; // kolumna B (0-based index)
 
   // Helper: pobiera link z RichText lub null
   function getRichLink(richCell) {
@@ -608,14 +645,15 @@ function startDownloadWithColors(colorMap, setId) {
     return;
   }
 
-  // 1) totals + zbieranie modułów użytych w zestawie
+  // 1) totals + zbieranie elementów i modułów użytych w zestawie
   const totals = {};
   const pathVisited = {};
   const moduleMap = {};
   const usedModules = new Set(); // moduły użyte w zestawie
+  const directElements = new Set(); // elementy bezpośrednio w zestawie (nie w modułach)
 
-  // Rozszerzona wersja collectElementTotals która zbiera też moduły
-  function collectWithModules(name, multiplier, parentModule) {
+  // Rozszerzona wersja collectElementTotals która zbiera moduły i śledzi pochodzenie elementów
+  function collectWithModules(name, multiplier, parentModule, isDirectInSet) {
     name = String(name).trim();
     if (!name) return;
 
@@ -629,7 +667,7 @@ function startDownloadWithColors(colorMap, setId) {
       if (children && children.length > 0) {
         for (let ch of children) {
           const childCount = (typeof ch.count === 'number' && !isNaN(ch.count) && ch.count > 0) ? ch.count : 1;
-          collectWithModules(ch.text, multiplier * childCount, name);
+          collectWithModules(ch.text, multiplier * childCount, name, false);
         }
       }
       pathVisited[name] = false;
@@ -642,11 +680,16 @@ function startDownloadWithColors(colorMap, setId) {
     if (parentModule && !moduleMap[name]) {
       moduleMap[name] = parentModule;
     }
+    
+    // Zapamiętaj elementy bezpośrednie w zestawie
+    if (isDirectInSet) {
+      directElements.add(name);
+    }
   }
 
   for (let e of startElements) {
     const topCount = (typeof e.count === 'number' && !isNaN(e.count) && e.count > 0) ? e.count : 1;
-    collectWithModules(e.text, topCount, null);
+    collectWithModules(e.text, topCount, null, true);
   }
 
   const elementNames = Object.keys(totals);
@@ -767,59 +810,18 @@ function startDownloadWithColors(colorMap, setId) {
   const ucancamMissing = [];
   const ucancamErrors = [];
   let ucancamFolder = null;
+  const processedUcancam = new Set(); // unikaj duplikatów
 
-  // 5a) Pobierz UCANCAM dla MODUŁÓW (z arkusza Moduły CNC)
-  for (const modName of usedModules) {
-    let ucancamLink = null;
-    
-    // Szukaj linku UCANCAM w arkuszu Moduły CNC
-    for (let i = 1; i < modValues.length; i++) {
-      const rowModName = String(modValues[i][0]).trim();
-      if (rowModName === modName) {
-        ucancamLink = getRichLink(modRich[i][COL_UCANCAM]);
-        if (ucancamLink) break;
-      }
-    }
-
-    if (ucancamLink) {
-      try {
-        const fileIdMatch = ucancamLink.match(/[-\w]{25,}/);
-        if (fileIdMatch) {
-          const fileId = fileIdMatch[0];
-          const sourceFile = DriveApp.getFileById(fileId);
-          const originalFileName = sourceFile.getName();
-          
-          // Utwórz podfolder UCANCAM jeśli nie istnieje
-          if (!ucancamFolder) {
-            ucancamFolder = folder.createFolder('UCANCAM');
-          }
-          
-          sourceFile.makeCopy(originalFileName, ucancamFolder);
-          ucancamDownloaded.push({ name: modName, fileName: originalFileName, type: 'moduł' });
-        } else {
-          ucancamErrors.push(`${modName}: nieprawidłowy format linku`);
-        }
-      } catch (e) {
-        ucancamErrors.push(`${modName}: ${e.message}`);
-      }
-    } else {
-      ucancamMissing.push({ name: modName, type: 'moduł' });
-    }
-  }
-
-  // 5b) Pobierz UCANCAM dla ELEMENTÓW (z arkusza Zestawy CNC)
-  // Elementy to te z kolumny B zestawu, które NIE są modułami
-  const processedElements = new Set(); // unikaj duplikatów
-  
+  // 5a) Pobierz UCANCAM dla ELEMENTÓW bezpośrednio w zestawie (z arkusza Zestawy CNC)
   for (let i = 1; i < zestValues.length; i++) {
     const rowSetId = String(zestValues[i][0]).trim();
-    const elementName = String(zestValues[i][1]).trim();
+    const elementName = String(zestValues[i][COL_ELEMENT]).trim();
     
     // Sprawdź czy to wiersz z naszego zestawu i czy to element (nie moduł)
     if (rowSetId === setId && elementName && !isModuleName(elementName)) {
       // Sprawdź czy już przetworzono ten element
-      if (processedElements.has(elementName)) continue;
-      processedElements.add(elementName);
+      if (processedUcancam.has(elementName)) continue;
+      processedUcancam.add(elementName);
       
       const ucancamLink = getRichLink(zestRich[i][COL_UCANCAM]);
       
@@ -836,7 +838,7 @@ function startDownloadWithColors(colorMap, setId) {
             }
             
             sourceFile.makeCopy(originalFileName, ucancamFolder);
-            ucancamDownloaded.push({ name: elementName, fileName: originalFileName, type: 'element' });
+            ucancamDownloaded.push({ name: elementName, fileName: originalFileName, type: 'element', source: 'zestaw' });
           } else {
             ucancamErrors.push(`${elementName}: nieprawidłowy format linku`);
           }
@@ -844,7 +846,49 @@ function startDownloadWithColors(colorMap, setId) {
           ucancamErrors.push(`${elementName}: ${e.message}`);
         }
       } else {
-        ucancamMissing.push({ name: elementName, type: 'element' });
+        ucancamMissing.push({ name: elementName, type: 'element', source: 'zestaw' });
+      }
+    }
+  }
+
+  // 5b) Pobierz UCANCAM dla wszystkich ELEMENTÓW z MODUŁÓW użytych w zestawie
+  for (const modName of usedModules) {
+    // Szukaj wszystkich elementów w module
+    for (let i = 1; i < modValues.length; i++) {
+      const rowModName = String(modValues[i][0]).trim();
+      const elementName = String(modValues[i][COL_ELEMENT]).trim();
+      
+      // Sprawdź czy to wiersz z tego modułu i czy jest element (nie moduł)
+      if (rowModName === modName && elementName && !isModuleName(elementName)) {
+        // Sprawdź czy już przetworzono ten element
+        if (processedUcancam.has(elementName)) continue;
+        processedUcancam.add(elementName);
+        
+        const ucancamLink = getRichLink(modRich[i][COL_UCANCAM]);
+        
+        if (ucancamLink) {
+          try {
+            const fileIdMatch = ucancamLink.match(/[-\w]{25,}/);
+            if (fileIdMatch) {
+              const fileId = fileIdMatch[0];
+              const sourceFile = DriveApp.getFileById(fileId);
+              const originalFileName = sourceFile.getName();
+              
+              if (!ucancamFolder) {
+                ucancamFolder = folder.createFolder('UCANCAM');
+              }
+              
+              sourceFile.makeCopy(originalFileName, ucancamFolder);
+              ucancamDownloaded.push({ name: elementName, fileName: originalFileName, type: 'element', source: modName });
+            } else {
+              ucancamErrors.push(`${elementName} (z ${modName}): nieprawidłowy format linku`);
+            }
+          } catch (e) {
+            ucancamErrors.push(`${elementName} (z ${modName}): ${e.message}`);
+          }
+        } else {
+          ucancamMissing.push({ name: elementName, type: 'element', source: modName });
+        }
       }
     }
   }
@@ -888,9 +932,30 @@ function startDownloadWithColors(colorMap, setId) {
   reportLines.push(`📦 POBRANE PLIKI UCANCAM: ${ucancamDownloaded.length}`);
   reportLines.push('-'.repeat(40));
   if (ucancamDownloaded.length > 0) {
-    ucancamDownloaded.forEach(u => {
-      reportLines.push(`  ✅ ${u.name} (${u.type}) → ${u.fileName}`);
-    });
+    // Grupuj według źródła
+    const bySource = {};
+    for (const u of ucancamDownloaded) {
+      const src = u.source || 'nieznane';
+      if (!bySource[src]) bySource[src] = [];
+      bySource[src].push(u);
+    }
+    
+    // Najpierw elementy z zestawu
+    if (bySource['zestaw']) {
+      reportLines.push(`  [Z zestawu]`);
+      bySource['zestaw'].forEach(u => {
+        reportLines.push(`    ✅ ${u.name} → ${u.fileName}`);
+      });
+      delete bySource['zestaw'];
+    }
+    
+    // Potem z modułów
+    for (const src of Object.keys(bySource).sort()) {
+      reportLines.push(`  [Z modułu: ${src}]`);
+      bySource[src].forEach(u => {
+        reportLines.push(`    ✅ ${u.name} → ${u.fileName}`);
+      });
+    }
   }
   reportLines.push('');
   
@@ -908,9 +973,29 @@ function startDownloadWithColors(colorMap, setId) {
   if (ucancamMissing.length > 0) {
     reportLines.push(`⚠️ BRAK LINKÓW UCANCAM: ${ucancamMissing.length}`);
     reportLines.push('-'.repeat(40));
-    ucancamMissing.forEach(u => {
-      reportLines.push(`  • ${u.name} (${u.type})`);
-    });
+    
+    // Grupuj według źródła
+    const missingBySource = {};
+    for (const u of ucancamMissing) {
+      const src = u.source || 'nieznane';
+      if (!missingBySource[src]) missingBySource[src] = [];
+      missingBySource[src].push(u.name);
+    }
+    
+    if (missingBySource['zestaw']) {
+      reportLines.push(`  [Z zestawu]`);
+      missingBySource['zestaw'].forEach(n => {
+        reportLines.push(`    • ${n}`);
+      });
+      delete missingBySource['zestaw'];
+    }
+    
+    for (const src of Object.keys(missingBySource).sort()) {
+      reportLines.push(`  [Z modułu: ${src}]`);
+      missingBySource[src].forEach(n => {
+        reportLines.push(`    • ${n}`);
+      });
+    }
     reportLines.push('');
   }
   
@@ -948,11 +1033,40 @@ function startDownloadWithColors(colorMap, setId) {
   if (ucancamDownloaded.length > 0) {
     summary.push('');
     summary.push(`📦 Pobrano plików UCANCAM: ${ucancamDownloaded.length}`);
-    ucancamDownloaded.slice(0, 10).forEach(u => {
-      summary.push(`   ✅ ${u.name} (${u.type}) → ${u.fileName}`);
-    });
-    if (ucancamDownloaded.length > 10) {
-      summary.push(`   ... + ${ucancamDownloaded.length - 10} innych`);
+    
+    // Pokaż pierwsze 10, grupując według źródła
+    const bySource = {};
+    for (const u of ucancamDownloaded) {
+      const src = u.source || 'nieznane';
+      if (!bySource[src]) bySource[src] = [];
+      bySource[src].push(u);
+    }
+    
+    let shown = 0;
+    const maxShow = 10;
+    
+    if (bySource['zestaw']) {
+      summary.push('   [Z zestawu]');
+      for (const u of bySource['zestaw']) {
+        if (shown >= maxShow) break;
+        summary.push(`     ✅ ${u.name} → ${u.fileName}`);
+        shown++;
+      }
+      delete bySource['zestaw'];
+    }
+    
+    for (const src of Object.keys(bySource).sort()) {
+      if (shown >= maxShow) break;
+      summary.push(`   [Z modułu: ${src}]`);
+      for (const u of bySource[src]) {
+        if (shown >= maxShow) break;
+        summary.push(`     ✅ ${u.name} → ${u.fileName}`);
+        shown++;
+      }
+    }
+    
+    if (ucancamDownloaded.length > maxShow) {
+      summary.push(`   ... + ${ucancamDownloaded.length - maxShow} innych`);
     }
   }
   
@@ -967,7 +1081,8 @@ function startDownloadWithColors(colorMap, setId) {
     summary.push('');
     summary.push(`⚠️ Brak linków UCANCAM (${ucancamMissing.length}):`);
     ucancamMissing.slice(0, 10).forEach(u => {
-      summary.push(`   • ${u.name} (${u.type})`);
+      const sourceStr = u.source === 'zestaw' ? 'z zestawu' : `z ${u.source}`;
+      summary.push(`   • ${u.name} (${sourceStr})`);
     });
     if (ucancamMissing.length > 10) {
       summary.push(`   ... + ${ucancamMissing.length - 10} innych`);
