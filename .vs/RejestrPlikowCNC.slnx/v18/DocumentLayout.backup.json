@@ -1,12 +1,122 @@
 {
   "Version": 1,
   "WorkspaceRootPath": "C:\\Skrypty\\RejestrPlik\u00F3wCNC\\RejestrPlikowCNC\\",
-  "Documents": [],
+  "Documents": [
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Skrypty\\RejestrPlik\u00F3wCNC\\RejestrPlikowCNC\\ui.js||{14D17961-FE51-464D-9111-C4AF11D7D99A}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:ui.js||{14D17961-FE51-464D-9111-C4AF11D7D99A}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Skrypty\\RejestrPlik\u00F3wCNC\\RejestrPlikowCNC\\links.js||{14D17961-FE51-464D-9111-C4AF11D7D99A}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:links.js||{14D17961-FE51-464D-9111-C4AF11D7D99A}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Skrypty\\RejestrPlik\u00F3wCNC\\RejestrPlikowCNC\\helpers.js||{14D17961-FE51-464D-9111-C4AF11D7D99A}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:helpers.js||{14D17961-FE51-464D-9111-C4AF11D7D99A}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Skrypty\\RejestrPlik\u00F3wCNC\\RejestrPlikowCNC\\downloads.js||{14D17961-FE51-464D-9111-C4AF11D7D99A}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:downloads.js||{14D17961-FE51-464D-9111-C4AF11D7D99A}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Skrypty\\RejestrPlik\u00F3wCNC\\RejestrPlikowCNC\\colorSelector.html||{40D31677-CBC0-4297-A9EF-89D907823A98}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:colorSelector.html||{40D31677-CBC0-4297-A9EF-89D907823A98}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Skrypty\\RejestrPlik\u00F3wCNC\\RejestrPlikowCNC\\Code.js||{14D17961-FE51-464D-9111-C4AF11D7D99A}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:Code.js||{14D17961-FE51-464D-9111-C4AF11D7D99A}"
+    }
+  ],
   "DocumentGroupContainers": [
     {
       "Orientation": 0,
       "VerticalTabListWidth": 256,
-      "DocumentGroups": []
+      "DocumentGroups": [
+        {
+          "DockedWidth": 200,
+          "SelectedChildIndex": 0,
+          "Children": [
+            {
+              "$type": "Document",
+              "DocumentIndex": 0,
+              "Title": "ui.js",
+              "DocumentMoniker": "C:\\Skrypty\\RejestrPlik\u00F3wCNC\\RejestrPlikowCNC\\ui.js",
+              "RelativeDocumentMoniker": "ui.js",
+              "ToolTip": "C:\\Skrypty\\RejestrPlik\u00F3wCNC\\RejestrPlikowCNC\\ui.js",
+              "RelativeToolTip": "ui.js",
+              "ViewState": "AgIAACcAAAAAAAAAAAAAwD4AAAADAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001646|",
+              "WhenOpened": "2025-12-05T13:53:43.048Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 1,
+              "Title": "links.js",
+              "DocumentMoniker": "C:\\Skrypty\\RejestrPlik\u00F3wCNC\\RejestrPlikowCNC\\links.js",
+              "RelativeDocumentMoniker": "links.js",
+              "ToolTip": "C:\\Skrypty\\RejestrPlik\u00F3wCNC\\RejestrPlikowCNC\\links.js",
+              "RelativeToolTip": "links.js",
+              "ViewState": "AgIAACwCAAAAAAAAAAAkwGwCAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001646|",
+              "WhenOpened": "2025-12-05T13:53:28.476Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 2,
+              "Title": "helpers.js",
+              "DocumentMoniker": "C:\\Skrypty\\RejestrPlik\u00F3wCNC\\RejestrPlikowCNC\\helpers.js",
+              "RelativeDocumentMoniker": "helpers.js",
+              "ToolTip": "C:\\Skrypty\\RejestrPlik\u00F3wCNC\\RejestrPlikowCNC\\helpers.js",
+              "RelativeToolTip": "helpers.js",
+              "ViewState": "AgIAAJsAAAAAAAAAAAAAwNkAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001646|",
+              "WhenOpened": "2025-12-05T13:53:20.795Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 3,
+              "Title": "downloads.js",
+              "DocumentMoniker": "C:\\Skrypty\\RejestrPlik\u00F3wCNC\\RejestrPlikowCNC\\downloads.js",
+              "RelativeDocumentMoniker": "downloads.js",
+              "ToolTip": "C:\\Skrypty\\RejestrPlik\u00F3wCNC\\RejestrPlikowCNC\\downloads.js",
+              "RelativeToolTip": "downloads.js",
+              "ViewState": "AgIAAJ4DAAAAAAAAAAAkwN4DAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001646|",
+              "WhenOpened": "2025-12-05T13:53:13.595Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 4,
+              "Title": "colorSelector.html",
+              "DocumentMoniker": "C:\\Skrypty\\RejestrPlik\u00F3wCNC\\RejestrPlikowCNC\\colorSelector.html",
+              "RelativeDocumentMoniker": "colorSelector.html",
+              "ToolTip": "C:\\Skrypty\\RejestrPlik\u00F3wCNC\\RejestrPlikowCNC\\colorSelector.html",
+              "RelativeToolTip": "colorSelector.html",
+              "ViewState": "AgIAABsAAAAAAAAAAAAAACwAAAAcAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001512|",
+              "WhenOpened": "2025-12-05T13:53:03.835Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 5,
+              "Title": "Code.js",
+              "DocumentMoniker": "C:\\Skrypty\\RejestrPlik\u00F3wCNC\\RejestrPlikowCNC\\Code.js",
+              "RelativeDocumentMoniker": "Code.js",
+              "ToolTip": "C:\\Skrypty\\RejestrPlik\u00F3wCNC\\RejestrPlikowCNC\\Code.js",
+              "RelativeToolTip": "Code.js",
+              "ViewState": "AgIAAOQDAAAAAAAAAAAAwO4DAABAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001646|",
+              "WhenOpened": "2025-12-05T12:29:34.346Z",
+              "EditorCaption": ""
+            }
+          ]
+        }
+      ]
     }
   ]
 }
