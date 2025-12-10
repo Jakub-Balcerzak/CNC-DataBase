@@ -316,10 +316,12 @@ function massCheckAndFixUcancamLinks() {
     return;
   }
 
-  // Kolumna F to index 5 (0-based)
-  const COL_ELEMENT = 1;   // kolumna B
-  const COL_UCANCAM = 5;   // kolumna F
+  // Kolumny (0-based)
+  const COL_ELEMENT = 1;        // kolumna B
+  const COL_UCANCAM = 5;        // kolumna F
+  const COL_UPTODATE = 6;       // kolumna G (UP-TO-DATE?)
   const COL_UCANCAM_LETTER = 'F';
+  const COL_UPTODATE_LETTER = 'G';
 
   // Helper: sprawdza czy nazwa to moduł (M... lub X...)
   function isModule(name) {
@@ -338,15 +340,80 @@ function massCheckAndFixUcancamLinks() {
     return null;
   }
 
+  // Helper: pobiera wartość checkboxa (true/false/null)
+  function getCheckboxValue(sheet, row, col) {
+    try {
+      const cell = sheet.getRange(row, col);
+      const value = cell.getValue();
+      
+      // Przypadek 1: Sprawdź czy komórka ma checkbox przez Data Validation
+      const dataValidation = cell.getDataValidation();
+      if (dataValidation) {
+        const criteria = dataValidation.getCriteriaType();
+        if (criteria === SpreadsheetApp.DataValidationCriteria.CHECKBOX) {
+          // Jest checkbox - zwróć wartość boolean
+          if (value === true) return true;
+          if (value === false) return false;
+          return null; // checkbox bez wartości
+        }
+      }
+      
+      // Przypadek 2: Sprawdź czy wartość to bezpośrednio boolean (TRUE/FALSE wpisane ręcznie)
+      if (typeof value === 'boolean') {
+        return value;
+      }
+      
+      // Przypadek 3: Sprawdź czy wartość to tekst "TRUE" lub "FALSE"
+      if (typeof value === 'string') {
+        const upperValue = value.toUpperCase().trim();
+        if (upperValue === 'TRUE') return true;
+        if (upperValue === 'FALSE') return false;
+      }
+      
+      // Brak checkboxa/wartości - zwróć null
+      return null;
+    } catch (e) {
+      Logger.log(`Błąd odczytu checkboxa w wierszu ${row}, kolumnie ${col}: ${e.message}`);
+      return null;
+    }
+  }
+
+  // Helper: ustawia wartość checkboxa
+  function setCheckboxValue(sheet, row, col, value) {
+    try {
+      const cell = sheet.getRange(row, col);
+      
+      // Upewnij się że komórka ma checkbox
+      const dataValidation = cell.getDataValidation();
+      if (!dataValidation) {
+        // Dodaj checkbox jeśli nie istnieje
+        const rule = SpreadsheetApp.newDataValidation()
+          .requireCheckbox()
+          .setAllowInvalid(false)
+          .build();
+        cell.setDataValidation(rule);
+      }
+      
+      // Ustaw wartość
+      cell.setValue(value === true ? true : false);
+    } catch (e) {
+      Logger.log(`Błąd ustawiania checkboxa w wierszu ${row}: ${e.message}`);
+    }
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
-  // ZBIERANIE ELEMENTÓW I ICH LINKÓW UCANCAM
+  // ZBIERANIE ELEMENTÓW I ICH LINKÓW UCANCAM + CHECKBOXÓW UP-TO-DATE
   // ═══════════════════════════════════════════════════════════════════════════
   
-  const elementLinks = {}; // { "H_M1594_01": [ { sheet, row, col, link }, ... ] }
+  const elementLinks = {};     // { "H_M1594_01": [ { sheet, row, col, link }, ... ] }
+  const elementCheckboxes = {}; // { "H_M1594_01": [ { sheet, row, col, checked }, ... ] }
 
-  // Zbierz z arkusza 'Moduły CNC' - elementy są w kolumnie B (index 1)
+  // Zbierz z arkusza 'Moduły CNC'
   const modData = sheetModuly.getDataRange().getValues();
   const modRich = sheetModuly.getDataRange().getRichTextValues();
+  
+  Logger.log(`=== ROZPOCZYNAM ZBIERANIE DANYCH ===`);
+  Logger.log(`Moduły CNC - wierszy: ${modData.length}`);
   
   for (let i = 1; i < modData.length; i++) { // pomijamy nagłówek
     const elementName = String(modData[i][COL_ELEMENT]).trim(); // kolumna B
@@ -354,8 +421,8 @@ function massCheckAndFixUcancamLinks() {
     // Pomijamy puste i moduły
     if (!elementName || isModule(elementName)) continue;
     
+    // Zbierz link UCANCAM
     const link = getRichLink(modRich[i][COL_UCANCAM]);
-    
     if (!elementLinks[elementName]) elementLinks[elementName] = [];
     elementLinks[elementName].push({
       sheet: 'Moduły CNC',
@@ -363,11 +430,25 @@ function massCheckAndFixUcancamLinks() {
       col: COL_UCANCAM + 1, // 1-based dla getRange
       link: link
     });
+    
+    // Zbierz checkbox UP-TO-DATE?
+    const checked = getCheckboxValue(sheetModuly, i + 1, COL_UPTODATE + 1);
+    Logger.log(`Element: ${elementName}, Wiersz: ${i + 1}, Checkbox wartość: ${checked}`);
+    
+    if (!elementCheckboxes[elementName]) elementCheckboxes[elementName] = [];
+    elementCheckboxes[elementName].push({
+      sheet: 'Moduły CNC',
+      row: i + 1,
+      col: COL_UPTODATE + 1,
+      checked: checked
+    });
   }
 
-  // Zbierz z arkusza 'Zestawy CNC' - elementy są w kolumnie B (index 1)
+  // Zbierz z arkusza 'Zestawy CNC'
   const zestData = sheetZestawy.getDataRange().getValues();
   const zestRich = sheetZestawy.getDataRange().getRichTextValues();
+  
+  Logger.log(`Zestawy CNC - wierszy: ${zestData.length}`);
   
   for (let i = 1; i < zestData.length; i++) { // pomijamy nagłówek
     const elementName = String(zestData[i][COL_ELEMENT]).trim(); // kolumna B
@@ -375,8 +456,8 @@ function massCheckAndFixUcancamLinks() {
     // Pomijamy puste i moduły
     if (!elementName || isModule(elementName)) continue;
     
+    // Zbierz link UCANCAM
     const link = getRichLink(zestRich[i][COL_UCANCAM]);
-    
     if (!elementLinks[elementName]) elementLinks[elementName] = [];
     elementLinks[elementName].push({
       sheet: 'Zestawy CNC',
@@ -384,10 +465,24 @@ function massCheckAndFixUcancamLinks() {
       col: COL_UCANCAM + 1,
       link: link
     });
+    
+    // Zbierz checkbox UP-TO-DATE?
+    const checked = getCheckboxValue(sheetZestawy, i + 1, COL_UPTODATE + 1);
+    Logger.log(`Element: ${elementName}, Wiersz: ${i + 1}, Checkbox wartość: ${checked}`);
+    
+    if (!elementCheckboxes[elementName]) elementCheckboxes[elementName] = [];
+    elementCheckboxes[elementName].push({
+      sheet: 'Zestawy CNC',
+      row: i + 1,
+      col: COL_UPTODATE + 1,
+      checked: checked
+    });
   }
-
+  
+  Logger.log(`=== ZEBRANO ELEMENTÓW: ${Object.keys(elementCheckboxes).length} ===`);
+  
   // ═══════════════════════════════════════════════════════════════════════════
-  // SPRAWDZANIE SPÓJNOŚCI LINKÓW
+  // SPRAWDZANIE SPÓJNOŚCI LINKÓW UCANCAM
   // ═══════════════════════════════════════════════════════════════════════════
   
   const inconsistencies = []; // różne linki dla tego samego elementu
@@ -423,7 +518,42 @@ function massCheckAndFixUcancamLinks() {
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // ROZWIĄZYWANIE KONFLIKTÓW
+  // SPRAWDZANIE SPÓJNOŚCI CHECKBOXÓW UP-TO-DATE?
+  // ═══════════════════════════════════════════════════════════════════════════
+  
+  const checkboxInconsistencies = []; // różne stany checkboxów dla tego samego elementu
+  let autoFilledCheckboxCount = 0;
+
+  for (const [elementName, entries] of Object.entries(elementCheckboxes)) {
+    // Filtruj tylko te które mają wartość (true/false), ignoruj null (brak checkboxa)
+    const validEntries = entries.filter(e => e.checked !== null);
+    
+    if (validEntries.length === 0) {
+      // Żaden checkbox nie ma wartości - pomijamy
+      continue;
+    }
+    
+    const uniqueStates = [...new Set(validEntries.map(e => e.checked))];
+    
+    if (uniqueStates.length === 1) {
+      // Jeden spójny stan — uzupełnij pozostałe checkboxy tym samym stanem
+      const validState = uniqueStates[0];
+      for (const e of entries) {
+        if (e.checked === null) {
+          // Checkbox nie ma wartości - ustaw
+          const sheet = ss.getSheetByName(e.sheet);
+          setCheckboxValue(sheet, e.row, e.col, validState);
+          autoFilledCheckboxCount++;
+        }
+      }
+    } else {
+      // Więcej niż jeden unikalny stan → konflikt
+      checkboxInconsistencies.push({ name: elementName, uniqueStates, entries: validEntries });
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ROZWIĄZYWANIE KONFLIKTÓW LINKÓW UCANCAM
   // ═══════════════════════════════════════════════════════════════════════════
   
   let fixedConflicts = 0;
@@ -470,35 +600,91 @@ function massCheckAndFixUcancamLinks() {
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // ROZWIĄZYWANIE KONFLIKTÓW CHECKBOXÓW UP-TO-DATE?
+  // ═══════════════════════════════════════════════════════════════════════════
+  
+  let fixedCheckboxConflicts = 0;
+  for (const conflict of checkboxInconsistencies) {
+    const { name, uniqueStates, entries } = conflict;
+    
+    // Przygotuj informację o lokalizacjach
+    let locationsInfo = entries.map(e => {
+      const stateIcon = e.checked === true ? '✓ zaznaczony' : '☐ odznaczony';
+      return `• ${e.sheet}!${COL_UPTODATE_LETTER}${e.row} (${stateIcon})`;
+    }).join('\n');
+    
+    let msg = `Element "${name}" ma różne stany checkboxa UP-TO-DATE?:\n\n`;
+    msg += `1. ✓ Zaznaczony (TRUE)\n`;
+    msg += `2. ☐ Odznaczony (FALSE)\n`;
+    msg += `\nWystąpienia:\n${locationsInfo}\n`;
+    msg += `\nWpisz numer (1 lub 2), który stan ma być używany we wszystkich wystąpieniach:`;
+
+    const response = ui.prompt('Konflikt checkboxów UP-TO-DATE?', msg, ui.ButtonSet.OK_CANCEL);
+    if (response.getSelectedButton() === ui.Button.OK) {
+      const userInput = response.getResponseText().trim();
+      const index = parseInt(userInput, 10);
+
+      if (index === 1 || index === 2) {
+        const chosenState = (index === 1); // 1 = true, 2 = false
+        
+        // Ustaw wybrany stan we wszystkich wystąpieniach (włącznie z tymi bez checkboxa)
+        const allEntries = elementCheckboxes[name] || [];
+        for (const e of allEntries) {
+          const sheet = ss.getSheetByName(e.sheet);
+          setCheckboxValue(sheet, e.row, e.col, chosenState);
+        }
+        fixedCheckboxConflicts++;
+      } else {
+        ui.alert(`❌ Podano nieprawidłowy numer. Pomijam element "${name}".`);
+      }
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // RAPORT KOŃCOWY
   // ═══════════════════════════════════════════════════════════════════════════
   
   const summaryLines = [];
   
   summaryLines.push(`📊 Sprawdzono ${Object.keys(elementLinks).length} elementów.`);
+  summaryLines.push('');
   
+  // Podsumowanie UCANCAM
+  summaryLines.push(`📦 LINKI UCANCAM (kolumna F):`);
   if (autoFilledCount > 0) {
-    summaryLines.push(`✅ Automatycznie uzupełniono ${autoFilledCount} pustych komórek UCANCAM.`);
+    summaryLines.push(`  ✅ Automatycznie uzupełniono ${autoFilledCount} pustych komórkach.`);
+  }
+  if (fixedConflicts > 0) {
+    summaryLines.push(`  🔧 Naprawiono konflikty dla ${fixedConflicts} elementów.`);
+  }
+  if (autoFilledCount === 0 && fixedConflicts === 0 && inconsistencies.length === 0) {
+    summaryLines.push(`  ✅ Wszystkie linki są spójne.`);
   }
   
-  if (fixedConflicts > 0) {
-    summaryLines.push(`🔧 Naprawiono konflikty dla ${fixedConflicts} elementów.`);
+  summaryLines.push('');
+  
+  // Podsumowanie UP-TO-DATE?
+  summaryLines.push(`☑️  CHECKBOXY UP-TO-DATE? (kolumna G):`);
+  if (autoFilledCheckboxCount > 0) {
+    summaryLines.push(`  ✅ Automatycznie uzupełniono ${autoFilledCheckboxCount} pustych checkboxów.`);
+  }
+  if (fixedCheckboxConflicts > 0) {
+    summaryLines.push(`  🔧 Naprawiono konflikty dla ${fixedCheckboxConflicts} elementów.`);
+  }
+  if (autoFilledCheckboxCount === 0 && fixedCheckboxConflicts === 0 && checkboxInconsistencies.length === 0) {
+    summaryLines.push(`  ✅ Wszystkie checkboxy są spójne.`);
   }
   
   if (missingLinks.length > 0) {
     summaryLines.push('');
     summaryLines.push(`⚠️ Elementy bez linku UCANCAM (${missingLinks.length}):`);
     missingLinks.slice(0, 20).forEach(m => {
-      summaryLines.push(`• ${m.name} (wystąpień: ${m.entries.length})`);
+      summaryLines.push(`  • ${m.name} (wystąpień: ${m.entries.length})`);
     });
     if (missingLinks.length > 20) {
-      summaryLines.push(`... i ${missingLinks.length - 20} innych`);
+      summaryLines.push(`  ... i ${missingLinks.length - 20} innych`);
     }
   }
-  
-  if (inconsistencies.length === 0 && missingLinks.length === 0 && autoFilledCount === 0) {
-    summaryLines.push('✅ Wszystkie elementy mają spójne linki UCANCAM.');
-  }
 
-  ui.alert('Sprawdzenie UCANCAM zakończone', summaryLines.join('\n'), ui.ButtonSet.OK);
+  ui.alert('Sprawdzenie UCANCAM i UP-TO-DATE zakończone', summaryLines.join('\n'), ui.ButtonSet.OK);
 }
