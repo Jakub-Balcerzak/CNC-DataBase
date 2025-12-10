@@ -1,0 +1,286 @@
+﻿<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <style>
+      body {
+        font-family: "Segoe UI", sans-serif;
+        margin: 16px;
+      }
+      h3 {
+        color: #d32f2f;
+        margin-bottom: 8px;
+      }
+      .progress-indicator {
+        color: #757575;
+        font-size: 14px;
+        margin-bottom: 16px;
+      }
+      .element-name {
+        font-weight: bold;
+        color: #1976d2;
+        margin-bottom: 16px;
+      }
+      .links-section {
+        margin-bottom: 24px;
+      }
+      .link-option {
+        padding: 12px;
+        margin: 8px 0;
+        border: 2px solid #e0e0e0;
+        border-radius: 4px;
+        background-color: #f5f5f5;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+      .link-option:hover {
+        border-color: #1976d2;
+        background-color: #e3f2fd;
+      }
+      .link-option.selected {
+        border-color: #1976d2;
+        background-color: #bbdefb;
+      }
+      .link-number {
+        font-weight: bold;
+        color: #1976d2;
+        margin-right: 8px;
+      }
+      .link-url {
+        color: #0d47a1;
+        word-break: break-all;
+        display: block;
+        margin-top: 4px;
+      }
+      .link-url a {
+        color: #0d47a1;
+        text-decoration: none;
+      }
+      .link-url a:hover {
+        text-decoration: underline;
+      }
+      .locations-section {
+        margin-bottom: 24px;
+      }
+      .location-item {
+        padding: 6px 12px;
+        margin: 4px 0;
+        background-color: #fff3e0;
+        border-left: 4px solid #ff9800;
+        border-radius: 2px;
+      }
+      .location-item.has-link {
+        background-color: #e8f5e9;
+        border-left-color: #4caf50;
+      }
+      .location-item.no-link {
+        background-color: #ffebee;
+        border-left-color: #f44336;
+      }
+      .buttons {
+        display: flex;
+        gap: 12px;
+        margin-top: 24px;
+      }
+      .btn {
+        padding: 10px 20px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+        transition: all 0.2s;
+        position: relative;
+      }
+      .btn-primary {
+        background-color: #1976d2;
+        color: white;
+      }
+      .btn-primary:hover:not(:disabled) {
+        background-color: #1565c0;
+      }
+      .btn-primary:disabled {
+        background-color: #bdbdbd;
+        cursor: not-allowed;
+      }
+      .btn-primary.loading {
+        background-color: #1565c0;
+        cursor: wait;
+      }
+      .btn-secondary {
+        background-color: #757575;
+        color: white;
+      }
+      .btn-secondary:hover:not(:disabled) {
+        background-color: #616161;
+      }
+      .btn-secondary:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .info-text {
+        color: #616161;
+        font-size: 14px;
+        margin-top: 8px;
+      }
+      
+      /* Loading spinner animation */
+      .spinner {
+        display: inline-block;
+        width: 14px;
+        height: 14px;
+        border: 2px solid rgba(255, 255, 255, 0.3);
+        border-radius: 50%;
+        border-top-color: white;
+        animation: spin 0.8s linear infinite;
+        margin-right: 8px;
+        vertical-align: middle;
+      }
+      
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+      
+      .btn-text {
+        display: inline-block;
+        vertical-align: middle;
+      }
+    </style>
+  </head>
+  <body>
+    <h3>⚠️ Konflikt linków UCANCAM</h3>
+    
+    <div class="progress-indicator">
+      Konflikt <?= currentConflict ?> z <?= totalConflicts ?>
+    </div>
+    
+    <div class="element-name">
+      Element: <?= elementName ?>
+    </div>
+
+    <div class="links-section">
+      <strong>Wybierz prawidłowy link:</strong>
+      <div class="info-text">Kliknij na link aby go otworzyć w nowej karcie</div>
+      
+      <? uniqueLinks.forEach((link, index) => { ?>
+        <div class="link-option" onclick="selectLink(<?= index ?>)" id="link-<?= index ?>">
+          <span class="link-number"><?= index + 1 ?>.</span>
+          <span class="link-url">
+            <a href="<?= link ?>" target="_blank" onclick="event.stopPropagation()">
+              <?= link ?>
+            </a>
+          </span>
+        </div>
+      <? }); ?>
+    </div>
+
+    <div class="locations-section">
+      <strong>Wystąpienia elementu:</strong>
+      <? locations.forEach(loc => { ?>
+        <div class="location-item <?= loc.hasLink ? 'has-link' : 'no-link' ?>">
+          • <?= loc.sheet ?>!<?= loc.column ?><?= loc.row ?> (<?= loc.hasLink ? 'ma link' : 'BRAK linku' ?>)
+        </div>
+      <? }); ?>
+    </div>
+
+    <div class="buttons">
+      <button class="btn btn-primary" id="okBtn" onclick="submitChoice()" disabled>
+        <span class="btn-text">OK</span>
+      </button>
+      <button class="btn btn-secondary" id="cancelBtn" onclick="cancel()">
+        Anuluj
+      </button>
+    </div>
+
+    <script>
+      let selectedIndex = null;
+      let isSubmitting = false;
+
+      function selectLink(index) {
+        if (isSubmitting) return; // Zablokuj wybór podczas wysyłania
+        
+        selectedIndex = index;
+        
+        // Usuń zaznaczenie z wszystkich
+        document.querySelectorAll('.link-option').forEach(el => {
+          el.classList.remove('selected');
+        });
+        
+        // Zaznacz wybrany
+        document.getElementById('link-' + index).classList.add('selected');
+        
+        // Włącz przycisk OK
+        document.getElementById('okBtn').disabled = false;
+      }
+
+      function submitChoice() {
+        if (selectedIndex === null) {
+          alert('Wybierz link przed zatwierdzeniem.');
+          return;
+        }
+        
+        if (isSubmitting) return; // Zapobiegaj wielokrotnemu kliknięciu
+        
+        isSubmitting = true;
+        
+        // Zablokuj oba przyciski
+        const okBtn = document.getElementById('okBtn');
+        const cancelBtn = document.getElementById('cancelBtn');
+        okBtn.disabled = true;
+        cancelBtn.disabled = true;
+        
+        // Dodaj spinner i zmień tekst
+        okBtn.classList.add('loading');
+        okBtn.innerHTML = '<span class="spinner"></span><span class="btn-text">Zapisywanie...</span>';
+        
+        // Zablokuj wybór linków
+        document.querySelectorAll('.link-option').forEach(el => {
+          el.style.pointerEvents = 'none';
+          el.style.opacity = '0.6';
+        });
+        
+        // Wyślij wybrany indeks (1-based) do Apps Script
+        google.script.run
+          .withSuccessHandler(() => {
+            // Okno zostanie zamknięte automatycznie przez Apps Script
+            google.script.host.close();
+          })
+          .withFailureHandler((error) => {
+            // W przypadku błędu przywróć stan przycisków
+            isSubmitting = false;
+            okBtn.disabled = false;
+            cancelBtn.disabled = false;
+            okBtn.classList.remove('loading');
+            okBtn.innerHTML = '<span class="btn-text">OK</span>';
+            
+            // Przywróć możliwość wyboru linków
+            document.querySelectorAll('.link-option').forEach(el => {
+              el.style.pointerEvents = '';
+              el.style.opacity = '';
+            });
+            
+            alert('Błąd: ' + error.message);
+          })
+          .resolveUcancamConflict('<?= elementName ?>', selectedIndex + 1);
+      }
+
+      function cancel() {
+        if (isSubmitting) return; // Nie pozwól na anulowanie podczas wysyłania
+        google.script.host.close();
+      }
+
+      // Obsługa klawiatury (1-9 dla wyboru linku)
+      document.addEventListener('keydown', (event) => {
+        if (isSubmitting) return; // Zablokuj klawiaturę podczas wysyłania
+        
+        const num = parseInt(event.key);
+        if (num >= 1 && num <= <?= uniqueLinks.length ?>) {
+          selectLink(num - 1);
+        } else if (event.key === 'Enter' && selectedIndex !== null) {
+          submitChoice();
+        } else if (event.key === 'Escape') {
+          cancel();
+        }
+      });
+    </script>
+  </body>
+</html>

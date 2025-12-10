@@ -302,7 +302,7 @@ function massCheckAndFixLinks() {
  * - Zbiera ELEMENTY (nie moduły M.../X...) z kolumny B obu arkuszy
  * - Dla każdego elementu sprawdza kolumnę F (UCANCAM)
  * - Uzupełnia puste komórki jeśli jest jeden spójny link
- * - Pyta użytkownika w przypadku konfliktów
+ * - Pyta użytkownika w przypadku konfliktów (przez HTML dialog)
  */
 function massCheckAndFixUcancamLinks() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -557,7 +557,7 @@ function massCheckAndFixUcancamLinks() {
       const validLink = uniqueLinks[0];
       for (const e of entries) {
         if (!e.link) {
-          const sheet = sheetsCache[e.sheet]; // Użyj cache
+          const sheet = ss.getSheetByName(e.sheet);
           const cell = sheet.getRange(e.row, e.col);
           const currentText = cell.getDisplayValue() || elementName;
           const richText = SpreadsheetApp.newRichTextValue()
@@ -599,7 +599,7 @@ function massCheckAndFixUcancamLinks() {
       for (const e of entries) {
         if (e.checked === null) {
           // Checkbox nie ma wartości - spróbuj ustawić
-          const sheet = sheetsCache[e.sheet]; // Użyj cache
+          const sheet = sheetsCache[e.sheet];
           const success = setCheckboxValue(sheet, e.row, e.col, validState);
           if (success) {
             autoFilledCheckboxCount++;
@@ -615,52 +615,28 @@ function massCheckAndFixUcancamLinks() {
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // ROZWIĄZYWANIE KONFLIKTÓW LINKÓW UCANCAM
+  // ROZWIĄZYWANIE KONFLIKTÓW LINKÓW UCANCAM (HTML DIALOGS)
   // ═══════════════════════════════════════════════════════════════════════════
   
-  let fixedConflicts = 0;
-  for (const conflict of inconsistencies) {
-    const { name, uniqueLinks, entries } = conflict;
+  if (inconsistencies.length > 0) {
+    // Zapisz dane konfliktów i inne statystyki w cache do użycia przez HTML dialogi i podsumowanie
+    PropertiesService.getScriptProperties().setProperty('ucancamConflicts', JSON.stringify({
+      conflicts: inconsistencies,
+      COL_UCANCAM_LETTER: COL_UCANCAM_LETTER,
+      sheetsCache: Object.keys(sheetsCache)
+    }));
+    PropertiesService.getScriptProperties().setProperty('ucancamConflictIndex', '0');
+    PropertiesService.getScriptProperties().setProperty('autoFilledCount', String(autoFilledCount));
+    PropertiesService.getScriptProperties().setProperty('totalElements', String(Object.keys(elementLinks).length));
+    PropertiesService.getScriptProperties().setProperty('missingLinks', JSON.stringify(missingLinks));
     
-    // Przygotuj informację o lokalizacjach
-    let locationsInfo = entries.map(e => {
-      const linkInfo = e.link ? `ma link` : `BRAK linku`;
-      return `• ${e.sheet}!${COL_UCANCAM_LETTER}${e.row} (${linkInfo})`;
-    }).join('\n');
+    // Pokaż pierwszy konflikt
+    showNextUcancamConflict();
     
-    let msg = `Element "${name}" ma różne linki UCANCAM:\n\n`;
-    uniqueLinks.forEach((l, i) => {
-      msg += `${i + 1}. ${l}\n`;
-    });
-    msg += `\nWystąpienia:\n${locationsInfo}\n`;
-    msg += `\nWpisz numer (1-${uniqueLinks.length}), który link ma być używany we wszystkich wystąpieniach:`;
-
-    const response = ui.prompt('Konflikt linków UCANCAM', msg, ui.ButtonSet.OK_CANCEL);
-    if (response.getSelectedButton() === ui.Button.OK) {
-      const userInput = response.getResponseText().trim();
-      const index = parseInt(userInput, 10);
-
-      if (!isNaN(index) && index >= 1 && index <= uniqueLinks.length) {
-        const chosenLink = uniqueLinks[index - 1];
-        
-        // Ustaw wybrany link we wszystkich wystąpieniach
-        for (const e of entries) {
-          const sheet = sheetsCache[e.sheet]; // Użyj cache
-          const cell = sheet.getRange(e.row, e.col);
-          const currentText = cell.getDisplayValue() || name;
-          const richText = SpreadsheetApp.newRichTextValue()
-            .setText(currentText)
-            .setLinkUrl(chosenLink)
-            .build();
-          cell.setRichTextValue(richText);
-        }
-        fixedConflicts++;
-      } else {
-        ui.alert(`❌ Podano nieprawidłowy numer. Pomijam element "${name}".`);
-      }
-    }
+    // Nie kontynuuj dalej - reszta zostanie wykonana po rozwiązaniu konfliktów
+    return;
   }
-
+  
   // ═══════════════════════════════════════════════════════════════════════════
   // ROZWIĄZYWANIE KONFLIKTÓW CHECKBOXÓW UP-TO-DATE?
   // ═══════════════════════════════════════════════════════════════════════════
@@ -687,13 +663,12 @@ function massCheckAndFixUcancamLinks() {
       const index = parseInt(userInput, 10);
 
       if (index === 1 || index === 2) {
-        const chosenState = (index === 1); // 1 = true, 2 = false
+        const chosenState = (index === 1);
         
-        // Ustaw wybrany stan we wszystkich wystąpieniach (włącznie z tymi bez checkboxa)
         const allEntries = elementCheckboxes[name] || [];
         let successCount = 0;
         for (const e of allEntries) {
-          const sheet = sheetsCache[e.sheet]; // Użyj cache
+          const sheet = sheetsCache[e.sheet];
           const success = setCheckboxValue(sheet, e.row, e.col, chosenState);
           if (success) {
             successCount++;
@@ -709,56 +684,7 @@ function massCheckAndFixUcancamLinks() {
       }
     }
   }
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // RAPORT KOŃCOWY
-  // ═══════════════════════════════════════════════════════════════════════════
   
-  const summaryLines = [];
-  
-  summaryLines.push(`📊 Sprawdzono ${Object.keys(elementLinks).length} elementów.`);
-  summaryLines.push('');
-  
-  // Podsumowanie UCANCAM
-  summaryLines.push(`📦 LINKI UCANCAM (kolumna F):`);
-  if (autoFilledCount > 0) {
-    summaryLines.push(`  ✅ Automatycznie uzupełniono ${autoFilledCount} pustych komórek.`);
-  }
-  if (fixedConflicts > 0) {
-    summaryLines.push(`  🔧 Naprawiono konflikty dla ${fixedConflicts} elementów.`);
-  }
-  if (autoFilledCount === 0 && fixedConflicts === 0 && inconsistencies.length === 0) {
-    summaryLines.push(`  ✅ Wszystkie linki są spójne.`);
-  }
-  
-  summaryLines.push('');
-  
-  // Podsumowanie UP-TO-DATE?
-  summaryLines.push(`☑️  CHECKBOXY UP-TO-DATE? (kolumna G):`);
-  if (autoFilledCheckboxCount > 0) {
-    summaryLines.push(`  ✅ Automatycznie uzupełniono ${autoFilledCheckboxCount} pustych checkboxów.`);
-  }
-  if (fixedCheckboxConflicts > 0) {
-    summaryLines.push(`  🔧 Naprawiono konflikty dla ${fixedCheckboxConflicts} elementów.`);
-  }
-  if (skippedTypedColumns > 0) {
-    summaryLines.push(`  ⚠️ Pominięto ${skippedTypedColumns} komórek z typed columns (wymagana ręczna synchronizacja).`);
-  }
-  if (autoFilledCheckboxCount === 0 && fixedCheckboxConflicts === 0 && checkboxInconsistencies.length === 0 && skippedTypedColumns === 0) {
-    summaryLines.push(`  ✅ Wszystkie checkboxy są spójne.`);
-  }
-  
-  if (missingLinks.length > 0) {
-    summaryLines.push('');
-    summaryLines.push(`⚠️ Elementy bez linku UCANCAM (${missingLinks.length}):`);
-    missingLinks.slice(0, 20).forEach(m => {
-      summaryLines.push(`  • ${m.name} (wystąpień: ${m.entries.length})`);
-    });
-    if (missingLinks.length > 20) {
-      summaryLines.push(`  ... i ${missingLinks.length - 20} innych`);
-    }
-  }
-
   // ═══════════════════════════════════════════════════════════════════════════
   // AKTUALIZACJA CHECKBOXÓW MODUŁÓW W ZESTAWACH CNC
   // ═══════════════════════════════════════════════════════════════════════════
@@ -776,11 +702,555 @@ function massCheckAndFixUcancamLinks() {
   );
   
   Logger.log(`Zaktualizowano ${updatedModules} modułów w arkuszu Zestawy CNC`);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // RAPORT KOŃCOWY
+  // ═══════════════════════════════════════════════════════════════════════════
+  
+  showFinalSummary(
+    Object.keys(elementLinks).length,
+    autoFilledCount,
+    0, // fixedConflicts - będzie uzupełnione po rozwiązaniu konfliktów
+    inconsistencies.length,
+    autoFilledCheckboxCount,
+    fixedCheckboxConflicts,
+    checkboxInconsistencies.length,
+    skippedTypedColumns,
+    updatedModules,
+    missingLinks
+  );
+}
+
+/**
+ * Pokazuje HTML dialog z następnym konfliktem linków UCANCAM.
+ * Jeśli nie ma więcej konfliktów, kontynuuje przetwarzanie checkboxów i pokazuje podsumowanie.
+ */
+function showNextUcancamConflict() {
+  const props = PropertiesService.getScriptProperties();
+  const conflictsData = JSON.parse(props.getProperty('ucancamConflicts'));
+  const currentIndex = parseInt(props.getProperty('ucancamConflictIndex') || '0');
+  
+  if (currentIndex >= conflictsData.conflicts.length) {
+    // Wszystkie konflikty rozwiązane - kontynuuj przetwarzanie
+    continueAfterUcancamConflicts();
+    return;
+  }
+  
+  const conflict = conflictsData.conflicts[currentIndex];
+  const COL_UCANCAM_LETTER = conflictsData.COL_UCANCAM_LETTER;
+  
+  // Przygotuj dane dla HTML
+  const locations = conflict.entries.map(e => ({
+    sheet: e.sheet,
+    row: e.row,
+    column: COL_UCANCAM_LETTER,
+    hasLink: !!e.link
+  }));
+  
+  // Stwórz HTML z template
+  const template = HtmlService.createTemplateFromFile('ucancamConflictResolver');
+  template.elementName = conflict.name;
+  template.uniqueLinks = conflict.uniqueLinks;
+  template.locations = locations;
+  template.currentConflict = currentIndex + 1;
+  template.totalConflicts = conflictsData.conflicts.length;
+  
+  const html = template.evaluate()
+    .setWidth(600)
+    .setHeight(500);
+  
+  SpreadsheetApp.getUi().showModalDialog(html, `Konflikt linków UCANCAM (${currentIndex + 1}/${conflictsData.conflicts.length})`);
+}
+
+/**
+ * Funkcja wywoływana z HTML dialog po wyborze linku.
+ * Aplikuje wybrany link i pokazuje następny konflikt.
+ */
+function resolveUcancamConflict(elementName, selectedIndex) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const props = PropertiesService.getScriptProperties();
+  const conflictsData = JSON.parse(props.getProperty('ucancamConflicts'));
+  const currentIndex = parseInt(props.getProperty('ucancamConflictIndex') || '0');
+  
+  const conflict = conflictsData.conflicts[currentIndex];
+  const chosenLink = conflict.uniqueLinks[selectedIndex - 1];
+  
+  // Aplikuj wybrany link do wszystkich wystąpień
+  for (const e of conflict.entries) {
+    const sheet = ss.getSheetByName(e.sheet);
+    const cell = sheet.getRange(e.row, e.col);
+    const currentText = cell.getDisplayValue() || elementName;
+    const richText = SpreadsheetApp.newRichTextValue()
+      .setText(currentText)
+      .setLinkUrl(chosenLink)
+      .build();
+    cell.setRichTextValue(richText);
+  }
+  
+  Logger.log(`Rozwiązano konflikt ${currentIndex + 1}: ${elementName} -> link #${selectedIndex}`);
+  
+  // Przejdź do następnego konfliktu
+  props.setProperty('ucancamConflictIndex', String(currentIndex + 1));
+  showNextUcancamConflict();
+}
+
+/**
+ * Kontynuuje przetwarzanie po rozwiązaniu wszystkich konfliktów UCANCAM.
+ * Przetwarza checkboxy i pokazuje końcowe podsumowanie.
+ */
+function continueAfterUcancamConflicts() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  
+  const sheetModuly = ss.getSheetByName('Moduły CNC');
+  const sheetZestawy = ss.getSheetByName('Zestawy CNC');
+  
+  const COL_ELEMENT = 1;
+  const COL_UPTODATE = 6;
+  const COL_UPTODATE_LETTER = 'G';
+  
+  const sheetsCache = {
+    'Moduły CNC': sheetModuly,
+    'Zestawy CNC': sheetZestawy
+  };
+  
+  function isModule(name) {
+    if (!name) return false;
+    return /^[MX]/i.test(String(name).trim());
+  }
+  
+  function setCheckboxValue(sheet, row, col, value) {
+    try {
+      const cell = sheet.getRange(row, col);
+      cell.setValue(Boolean(value));
+      return true;
+    } catch (e) {
+      if (String(e.message).includes('typed column') || 
+          String(e.message).includes('not allowed')) {
+        return false;
+      }
+      try {
+        const dataValidation = cell.getDataValidation();
+        if (!dataValidation) {
+          const rule = SpreadsheetApp.newDataValidation()
+            .requireCheckbox()
+            .setAllowInvalid(false)
+            .build();
+          cell.setDataValidation(rule);
+        }
+        cell.setValue(Boolean(value));
+        return true;
+      } catch (e2) {
+        return false;
+      }
+    }
+  }
+  
+  // Pobierz dane o rozwiązanych konfliktach
+  const props = PropertiesService.getScriptProperties();
+  const conflictsData = JSON.parse(props.getProperty('ucancamConflicts'));
+  const fixedConflicts = conflictsData.conflicts.length;
+  
+  // Pobierz dane które już zostały zebrane
+  const modData = sheetModuly.getDataRange().getValues();
+  const zestData = sheetZestawy.getDataRange().getValues();
+  const allModCheckboxValues = modData.length > 1 
+    ? sheetModuly.getRange(2, COL_UPTODATE + 1, modData.length - 1, 1).getValues()
+    : [];
+  const allZestCheckboxValues = zestData.length > 1
+    ? sheetZestawy.getRange(2, COL_UPTODATE + 1, zestData.length - 1, 1).getValues()
+    : [];
+  
+  // Zbierz checkboxy ponownie
+  const elementCheckboxes = {};
+  
+  for (let i = 1; i < modData.length; i++) {
+    const elementName = String(modData[i][COL_ELEMENT]).trim();
+    if (!elementName || isModule(elementName)) continue;
+    
+    const value = allModCheckboxValues[i - 1][0];
+    let checked = null;
+    
+    if (typeof value === 'boolean') {
+      checked = value;
+    } else if (typeof value === 'string') {
+      const upperValue = value.toUpperCase().trim();
+      if (upperValue === 'TRUE') checked = true;
+      else if (upperValue === 'FALSE') checked = false;
+    }
+    
+    if (!elementCheckboxes[elementName]) elementCheckboxes[elementName] = [];
+    elementCheckboxes[elementName].push({
+      sheet: 'Moduły CNC',
+      row: i + 1,
+      col: COL_UPTODATE + 1,
+      checked: checked
+    });
+  }
+  
+  for (let i = 1; i < zestData.length; i++) {
+    const elementName = String(zestData[i][COL_ELEMENT]).trim();
+    if (!elementName || isModule(elementName)) continue;
+    
+    const value = allZestCheckboxValues[i - 1][0];
+    let checked = null;
+    
+    if (typeof value === 'boolean') {
+      checked = value;
+    } else if (typeof value === 'string') {
+      const upperValue = value.toUpperCase().trim();
+      if (upperValue === 'TRUE') checked = true;
+      else if (upperValue === 'FALSE') checked = false;
+    }
+    
+    if (!elementCheckboxes[elementName]) elementCheckboxes[elementName] = [];
+    elementCheckboxes[elementName].push({
+      sheet: 'Zestawy CNC',
+      row: i + 1,
+      col: COL_UPTODATE + 1,
+      checked: checked
+    });
+  }
+  
+  // Sprawdź checkboxy
+  const checkboxInconsistencies = [];
+  let autoFilledCheckboxCount = 0;
+  let skippedTypedColumns = 0;
+  
+  for (const [elementName, entries] of Object.entries(elementCheckboxes)) {
+    const validEntries = entries.filter(e => e.checked !== null);
+    
+    if (validEntries.length === 0) continue;
+    
+    const uniqueStates = [...new Set(validEntries.map(e => e.checked))];
+    
+    if (uniqueStates.length === 1) {
+      const validState = uniqueStates[0];
+      for (const e of entries) {
+        if (e.checked === null) {
+          const sheet = sheetsCache[e.sheet];
+          const success = setCheckboxValue(sheet, e.row, e.col, validState);
+          if (success) {
+            autoFilledCheckboxCount++;
+          } else {
+            skippedTypedColumns++;
+          }
+        }
+      }
+    } else {
+      checkboxInconsistencies.push({ name: elementName, uniqueStates, entries: validEntries });
+    }
+  }
+  
+  // Pobierz informacje o brakujących linkach z pierwotnego przetwarzania
+  const autoFilledCount = parseInt(props.getProperty('autoFilledCount') || '0');
+  const totalElements = parseInt(props.getProperty('totalElements') || '0');
+  const missingLinksJson = props.getProperty('missingLinks') || '[]';
+  const missingLinks = JSON.parse(missingLinksJson);
+  
+  // Zapisz dane o checkboxach do przetworzenia
+  if (checkboxInconsistencies.length > 0) {
+    // Zapisz dane konfliktów checkboxów
+    props.setProperty('checkboxConflicts', JSON.stringify({
+      conflicts: checkboxInconsistencies,
+      COL_UPTODATE_LETTER: COL_UPTODATE_LETTER,
+      elementCheckboxes: elementCheckboxes,
+      sheetsCache: Object.keys(sheetsCache)
+    }));
+    props.setProperty('checkboxConflictIndex', '0');
+    props.setProperty('checkboxAutoFilledCount', String(autoFilledCheckboxCount));
+    props.setProperty('checkboxSkippedTypedColumns', String(skippedTypedColumns));
+    
+    // Pokaż pierwszy konflikt checkboxów
+    showNextCheckboxConflict();
+    return;
+  }
+  
+  // Aktualizuj moduły
+  const updatedModules = updateModuleCheckboxesInZestawy(
+    modData,
+    allModCheckboxValues,
+    zestData,
+    sheetsCache,
+    COL_ELEMENT,
+    COL_UPTODATE,
+    isModule
+  );
+  
+  // Wyczyść cache
+  props.deleteProperty('ucancamConflicts');
+  props.deleteProperty('ucancamConflictIndex');
+  props.deleteProperty('autoFilledCount');
+  props.deleteProperty('totalElements');
+  props.deleteProperty('missingLinks');
+  props.deleteProperty('checkboxConflicts');
+  props.deleteProperty('checkboxConflictIndex');
+  props.deleteProperty('checkboxAutoFilledCount');
+  props.deleteProperty('checkboxSkippedTypedColumns');
+  
+  // Pokaż końcowe podsumowanie
+  showFinalSummary(
+    totalElements,
+    autoFilledCount,
+    fixedConflicts,
+    0,
+    autoFilledCheckboxCount,
+    fixedCheckboxConflicts,
+    0,
+    skippedTypedColumns,
+    updatedModules,
+    missingLinks
+  );
+}
+
+/**
+ * Pokazuje HTML dialog z następnym konfliktem checkboxów.
+ * Jeśli nie ma więcej konfliktów, aktualizuje moduły i pokazuje podsumowanie.
+ */
+function showNextCheckboxConflict() {
+  const props = PropertiesService.getScriptProperties();
+  const checkboxData = JSON.parse(props.getProperty('checkboxConflicts'));
+  const currentIndex = parseInt(props.getProperty('checkboxConflictIndex') || '0');
+  
+  if (currentIndex >= checkboxData.conflicts.length) {
+    // Wszystkie konflikty checkboxów rozwiązane - finalizuj
+    finalizeCheckboxConflicts();
+    return;
+  }
+  
+  const conflict = checkboxData.conflicts[currentIndex];
+  const COL_UPTODATE_LETTER = checkboxData.COL_UPTODATE_LETTER;
+  
+  // Przygotuj dane dla HTML
+  const locations = conflict.entries.map(e => ({
+    sheet: e.sheet,
+    row: e.row,
+    column: COL_UPTODATE_LETTER,
+    checked: e.checked
+  }));
+  
+  // Stwórz HTML z template
+  const template = HtmlService.createTemplateFromFile('checkboxConflictResolver');
+  template.elementName = conflict.name;
+  template.locations = locations;
+  template.currentConflict = currentIndex + 1;
+  template.totalConflicts = checkboxData.conflicts.length;
+  
+  const html = template.evaluate()
+    .setWidth(500)
+    .setHeight(450);
+  
+  SpreadsheetApp.getUi().showModalDialog(html, `Konflikt checkboxów (${currentIndex + 1}/${checkboxData.conflicts.length})`);
+}
+
+/**
+ * Funkcja wywoływana z HTML dialog po wyborze stanu checkboxa.
+ * Aplikuje wybrany stan i pokazuje następny konflikt.
+ */
+function resolveCheckboxConflict(elementName, selectedState) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const props = PropertiesService.getScriptProperties();
+  const checkboxData = JSON.parse(props.getProperty('checkboxConflicts'));
+  const currentIndex = parseInt(props.getProperty('checkboxConflictIndex') || '0');
+  
+  const sheetsCache = {
+    'Moduły CNC': ss.getSheetByName('Moduły CNC'),
+    'Zestawy CNC': ss.getSheetByName('Zestawy CNC')
+  };
+  
+  const elementCheckboxes = checkboxData.elementCheckboxes;
+  const allEntries = elementCheckboxes[elementName] || [];
+  
+  let skippedTypedColumns = parseInt(props.getProperty('checkboxSkippedTypedColumns') || '0');
+  let successCount = 0;
+  
+  // Aplikuj wybrany stan do wszystkich wystąpień
+  for (const e of allEntries) {
+    const sheet = sheetsCache[e.sheet];
+    try {
+      const cell = sheet.getRange(e.row, e.col);
+      cell.setValue(Boolean(selectedState));
+      successCount++;
+    } catch (error) {
+      if (String(error.message).includes('typed column') || 
+          String(error.message).includes('not allowed')) {
+        skippedTypedColumns++;
+      } else {
+        try {
+          const dataValidation = cell.getDataValidation();
+          if (!dataValidation) {
+            const rule = SpreadsheetApp.newDataValidation()
+              .requireCheckbox()
+              .setAllowInvalid(false)
+              .build();
+            cell.setDataValidation(rule);
+          }
+          cell.setValue(Boolean(selectedState));
+          successCount++;
+        } catch (e2) {
+          skippedTypedColumns++;
+        }
+      }
+    }
+  }
+  
+  // Zaktualizuj licznik pominiętych typed columns
+  props.setProperty('checkboxSkippedTypedColumns', String(skippedTypedColumns));
+  
+  Logger.log(`Rozwiązano konflikt checkboxa ${currentIndex + 1}: ${elementName} -> ${selectedState ? 'TRUE' : 'FALSE'} (${successCount} aktualizacji)`);
+  
+  // Przejdź do następnego konfliktu
+  props.setProperty('checkboxConflictIndex', String(currentIndex + 1));
+  showNextCheckboxConflict();
+}
+
+/**
+ * Finalizuje przetwarzanie po rozwiązaniu wszystkich konfliktów checkboxów.
+ */
+function finalizeCheckboxConflicts() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const props = PropertiesService.getScriptProperties();
+  
+  const sheetModuly = ss.getSheetByName('Moduły CNC');
+  const sheetZestawy = ss.getSheetByName('Zestawy CNC');
+  
+  const COL_ELEMENT = 1;
+  const COL_UPTODATE = 6;
+  
+  const sheetsCache = {
+    'Moduły CNC': sheetModuly,
+    'Zestawy CNC': sheetZestawy
+  };
+  
+  function isModule(name) {
+    if (!name) return false;
+    return /^[MX]/i.test(String(name).trim());
+  }
+  
+  // Pobierz dane
+  const modData = sheetModuly.getDataRange().getValues();
+  const zestData = sheetZestawy.getDataRange().getValues();
+  const allModCheckboxValues = modData.length > 1 
+    ? sheetModuly.getRange(2, COL_UPTODATE + 1, modData.length - 1, 1).getValues()
+    : [];
+  
+  // Aktualizuj moduły
+  const updatedModules = updateModuleCheckboxesInZestawy(
+    modData,
+    allModCheckboxValues,
+    zestData,
+    sheetsCache,
+    COL_ELEMENT,
+    COL_UPTODATE,
+    isModule
+  );
+  
+  // Pobierz wszystkie statystyki
+  const checkboxData = JSON.parse(props.getProperty('checkboxConflicts'));
+  const fixedCheckboxConflicts = checkboxData.conflicts.length;
+  const autoFilledCheckboxCount = parseInt(props.getProperty('checkboxAutoFilledCount') || '0');
+  const skippedTypedColumns = parseInt(props.getProperty('checkboxSkippedTypedColumns') || '0');
+  
+  const autoFilledCount = parseInt(props.getProperty('autoFilledCount') || '0');
+  const totalElements = parseInt(props.getProperty('totalElements') || '0');
+  const missingLinksJson = props.getProperty('missingLinks') || '[]';
+  const missingLinks = JSON.parse(missingLinksJson);
+  
+  // Pobierz liczbę naprawionych konfliktów UCANCAM
+  const ucancamData = JSON.parse(props.getProperty('ucancamConflicts') || '{"conflicts":[]}');
+  const fixedConflicts = ucancamData.conflicts.length;
+  
+  // Wyczyść cache
+  props.deleteProperty('ucancamConflicts');
+  props.deleteProperty('ucancamConflictIndex');
+  props.deleteProperty('autoFilledCount');
+  props.deleteProperty('totalElements');
+  props.deleteProperty('missingLinks');
+  props.deleteProperty('checkboxConflicts');
+  props.deleteProperty('checkboxConflictIndex');
+  props.deleteProperty('checkboxAutoFilledCount');
+  props.deleteProperty('checkboxSkippedTypedColumns');
+  
+  // Pokaż końcowe podsumowanie
+  showFinalSummary(
+    totalElements,
+    autoFilledCount,
+    fixedConflicts,
+    0,
+    autoFilledCheckboxCount,
+    fixedCheckboxConflicts,
+    0,
+    skippedTypedColumns,
+    updatedModules,
+    missingLinks
+  );
+}
+
+/**
+ * Pokazuje końcowe podsumowanie sprawdzenia UCANCAM i UP-TO-DATE.
+ */
+function showFinalSummary(
+  totalElements,
+  autoFilledCount,
+  fixedConflicts,
+  unresolvedConflicts,
+  autoFilledCheckboxCount,
+  fixedCheckboxConflicts,
+  unresolvedCheckboxConflicts,
+  skippedTypedColumns,
+  updatedModules,
+  missingLinks
+) {
+  const ui = SpreadsheetApp.getUi();
+  const summaryLines = [];
+  
+  summaryLines.push(`📊 Sprawdzono ${totalElements} elementów.`);
+  summaryLines.push('');
+  
+  // Podsumowanie UCANCAM
+  summaryLines.push(`📦 LINKI UCANCAM (kolumna F):`);
+  if (autoFilledCount > 0) {
+    summaryLines.push(`  ✅ Automatycznie uzupełniono ${autoFilledCount} pustych komórek.`);
+  }
+  if (fixedConflicts > 0) {
+    summaryLines.push(`  🔧 Naprawiono konflikty dla ${fixedConflicts} elementów.`);
+  }
+  if (autoFilledCount === 0 && fixedConflicts === 0 && unresolvedConflicts === 0) {
+    summaryLines.push(`  ✅ Wszystkie linki są spójne.`);
+  }
+  
+  summaryLines.push('');
+  
+  // Podsumowanie UP-TO-DATE?
+  summaryLines.push(`☑️  CHECKBOXY UP-TO-DATE? (kolumna G):`);
+  if (autoFilledCheckboxCount > 0) {
+    summaryLines.push(`  ✅ Automatycznie uzupełniono ${autoFilledCheckboxCount} pustych checkboxów.`);
+  }
+  if (fixedCheckboxConflicts > 0) {
+    summaryLines.push(`  🔧 Naprawiono konflikty dla ${fixedCheckboxConflicts} elementów.`);
+  }
+  if (skippedTypedColumns > 0) {
+    summaryLines.push(`  ⚠️ Pominięto ${skippedTypedColumns} komórek z typed columns (wymagana ręczna synchronizacja).`);
+  }
+  if (autoFilledCheckboxCount === 0 && fixedCheckboxConflicts === 0 && unresolvedCheckboxConflicts === 0 && skippedTypedColumns === 0) {
+    summaryLines.push(`  ✅ Wszystkie checkboxy są spójne.`);
+  }
   
   if (updatedModules > 0) {
     summaryLines.push('');
     summaryLines.push(`🔄 MODUŁY W ZESTAWACH CNC:`);
     summaryLines.push(`  ✅ Zaktualizowano checkboxy dla ${updatedModules} modułów.`);
+  }
+  
+  if (missingLinks.length > 0) {
+    summaryLines.push('');
+    summaryLines.push(`⚠️ Elementy bez linku UCANCAM (${missingLinks.length}):`);
+    missingLinks.slice(0, 20).forEach(m => {
+      summaryLines.push(`  • ${m.name} (wystąpień: ${m.entries.length})`);
+    });
+    if (missingLinks.length > 20) {
+      summaryLines.push(`  ... i ${missingLinks.length - 20} innych`);
+    }
   }
 
   ui.alert('Sprawdzenie UCANCAM i UP-TO-DATE zakończone', summaryLines.join('\n'), ui.ButtonSet.OK);
