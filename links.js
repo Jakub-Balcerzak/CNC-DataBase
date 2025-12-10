@@ -383,16 +383,14 @@ function massCheckAndFixUcancamLinks() {
     try {
       const cell = sheet.getRange(row, col);
       
-      // Po prostu spróbuj ustawić wartość boolean
-      // Jeśli kolumna jest typed column, rzuci błąd który złapiemy
-      cell.setValue(value === true ? true : false);
+      // Uproszczenie (Optymalizacja #5)
+      cell.setValue(Boolean(value));
       return true; // Sukces
       
     } catch (e) {
       // Jeśli wystąpił błąd "typed columns", zwróć false
       if (String(e.message).includes('typed column') || 
           String(e.message).includes('not allowed')) {
-        Logger.log(`Nie można zsynchronizować checkboxa w wierszu ${row} (typed column) - pomijam`);
         return false; // Typed column - nie można zsynchronizować
       }
       
@@ -406,10 +404,9 @@ function massCheckAndFixUcancamLinks() {
             .build();
           cell.setDataValidation(rule);
         }
-        cell.setValue(value === true ? true : false);
+        cell.setValue(Boolean(value));
         return true; // Sukces
       } catch (e2) {
-        Logger.log(`Błąd ustawiania checkboxa w wierszu ${row}: ${e2.message}`);
         return false; // Niepowodzenie
       }
     }
@@ -422,6 +419,12 @@ function massCheckAndFixUcancamLinks() {
   const elementLinks = {};     // { "H_M1594_01": [ { sheet, row, col, link }, ... ] }
   const elementCheckboxes = {}; // { "H_M1594_01": [ { sheet, row, col, checked }, ... ] }
 
+  // Cache arkuszy (Optymalizacja #2)
+  const sheetsCache = {
+    'Moduły CNC': sheetModuly,
+    'Zestawy CNC': sheetZestawy
+  };
+
   // Zbierz z arkusza 'Moduły CNC'
   const modData = sheetModuly.getDataRange().getValues();
   const modRich = sheetModuly.getDataRange().getRichTextValues();
@@ -429,25 +432,45 @@ function massCheckAndFixUcancamLinks() {
   Logger.log(`=== ROZPOCZYNAM ZBIERANIE DANYCH ===`);
   Logger.log(`Moduły CNC - wierszy: ${modData.length}`);
   
+  // Batch pobranie wszystkich checkboxów (Optymalizacja #3)
+  const allModCheckboxValues = modData.length > 1 
+    ? sheetModuly.getRange(2, COL_UPTODATE + 1, modData.length - 1, 1).getValues()
+    : [];
+  
   for (let i = 1; i < modData.length; i++) { // pomijamy nagłówek
     const elementName = String(modData[i][COL_ELEMENT]).trim(); // kolumna B
     
     // Pomijamy puste i moduły
     if (!elementName || isModule(elementName)) continue;
     
-    // Zbierz link UCANCAM
-    const link = getRichLink(modRich[i][COL_UCANCAM]);
+    // Inline getRichLink (Optymalizacja #4)
+    let link = null;
+    const richCell = modRich[i][COL_UCANCAM];
+    if (richCell) {
+      try {
+        link = richCell.getLinkUrl() || null;
+      } catch (e) {}
+    }
+    
     if (!elementLinks[elementName]) elementLinks[elementName] = [];
     elementLinks[elementName].push({
       sheet: 'Moduły CNC',
       row: i + 1,
-      col: COL_UCANCAM + 1, // 1-based dla getRange
+      col: COL_UCANCAM + 1,
       link: link
     });
     
-    // Zbierz checkbox UP-TO-DATE?
-    const checked = getCheckboxValue(sheetModuly, i + 1, COL_UPTODATE + 1);
-    Logger.log(`Element: ${elementName}, Wiersz: ${i + 1}, Checkbox wartość: ${checked}`);
+    // Batch odczyt checkboxa (Optymalizacja #3)
+    const value = allModCheckboxValues[i - 1][0];
+    let checked = null;
+    
+    if (typeof value === 'boolean') {
+      checked = value;
+    } else if (typeof value === 'string') {
+      const upperValue = value.toUpperCase().trim();
+      if (upperValue === 'TRUE') checked = true;
+      else if (upperValue === 'FALSE') checked = false;
+    }
     
     if (!elementCheckboxes[elementName]) elementCheckboxes[elementName] = [];
     elementCheckboxes[elementName].push({
@@ -464,14 +487,26 @@ function massCheckAndFixUcancamLinks() {
   
   Logger.log(`Zestawy CNC - wierszy: ${zestData.length}`);
   
+  // Batch pobranie wszystkich checkboxów (Optymalizacja #3)
+  const allZestCheckboxValues = zestData.length > 1
+    ? sheetZestawy.getRange(2, COL_UPTODATE + 1, zestData.length - 1, 1).getValues()
+    : [];
+  
   for (let i = 1; i < zestData.length; i++) { // pomijamy nagłówek
     const elementName = String(zestData[i][COL_ELEMENT]).trim(); // kolumna B
     
     // Pomijamy puste i moduły
     if (!elementName || isModule(elementName)) continue;
     
-    // Zbierz link UCANCAM
-    const link = getRichLink(zestRich[i][COL_UCANCAM]);
+    // Inline getRichLink (Optymalizacja #4)
+    let link = null;
+    const richCell = zestRich[i][COL_UCANCAM];
+    if (richCell) {
+      try {
+        link = richCell.getLinkUrl() || null;
+      } catch (e) {}
+    }
+    
     if (!elementLinks[elementName]) elementLinks[elementName] = [];
     elementLinks[elementName].push({
       sheet: 'Zestawy CNC',
@@ -480,9 +515,17 @@ function massCheckAndFixUcancamLinks() {
       link: link
     });
     
-    // Zbierz checkbox UP-TO-DATE?
-    const checked = getCheckboxValue(sheetZestawy, i + 1, COL_UPTODATE + 1);
-    Logger.log(`Element: ${elementName}, Wiersz: ${i + 1}, Checkbox wartość: ${checked}`);
+    // Batch odczyt checkboxa (Optymalizacja #3)
+    const value = allZestCheckboxValues[i - 1][0];
+    let checked = null;
+    
+    if (typeof value === 'boolean') {
+      checked = value;
+    } else if (typeof value === 'string') {
+      const upperValue = value.toUpperCase().trim();
+      if (upperValue === 'TRUE') checked = true;
+      else if (upperValue === 'FALSE') checked = false;
+    }
     
     if (!elementCheckboxes[elementName]) elementCheckboxes[elementName] = [];
     elementCheckboxes[elementName].push({
@@ -514,7 +557,7 @@ function massCheckAndFixUcancamLinks() {
       const validLink = uniqueLinks[0];
       for (const e of entries) {
         if (!e.link) {
-          const sheet = ss.getSheetByName(e.sheet);
+          const sheet = sheetsCache[e.sheet]; // Użyj cache
           const cell = sheet.getRange(e.row, e.col);
           const currentText = cell.getDisplayValue() || elementName;
           const richText = SpreadsheetApp.newRichTextValue()
@@ -556,7 +599,7 @@ function massCheckAndFixUcancamLinks() {
       for (const e of entries) {
         if (e.checked === null) {
           // Checkbox nie ma wartości - spróbuj ustawić
-          const sheet = ss.getSheetByName(e.sheet);
+          const sheet = sheetsCache[e.sheet]; // Użyj cache
           const success = setCheckboxValue(sheet, e.row, e.col, validState);
           if (success) {
             autoFilledCheckboxCount++;
@@ -602,7 +645,7 @@ function massCheckAndFixUcancamLinks() {
         
         // Ustaw wybrany link we wszystkich wystąpieniach
         for (const e of entries) {
-          const sheet = ss.getSheetByName(e.sheet);
+          const sheet = sheetsCache[e.sheet]; // Użyj cache
           const cell = sheet.getRange(e.row, e.col);
           const currentText = cell.getDisplayValue() || name;
           const richText = SpreadsheetApp.newRichTextValue()
@@ -650,7 +693,7 @@ function massCheckAndFixUcancamLinks() {
         const allEntries = elementCheckboxes[name] || [];
         let successCount = 0;
         for (const e of allEntries) {
-          const sheet = ss.getSheetByName(e.sheet);
+          const sheet = sheetsCache[e.sheet]; // Użyj cache
           const success = setCheckboxValue(sheet, e.row, e.col, chosenState);
           if (success) {
             successCount++;
