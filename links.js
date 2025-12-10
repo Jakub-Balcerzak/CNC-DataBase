@@ -383,21 +383,35 @@ function massCheckAndFixUcancamLinks() {
     try {
       const cell = sheet.getRange(row, col);
       
-      // Upewnij się że komórka ma checkbox
-      const dataValidation = cell.getDataValidation();
-      if (!dataValidation) {
-        // Dodaj checkbox jeśli nie istnieje
-        const rule = SpreadsheetApp.newDataValidation()
-          .requireCheckbox()
-          .setAllowInvalid(false)
-          .build();
-        cell.setDataValidation(rule);
+      // Po prostu spróbuj ustawić wartość boolean
+      // Jeśli kolumna jest typed column, rzuci błąd który złapiemy
+      cell.setValue(value === true ? true : false);
+      return true; // Sukces
+      
+    } catch (e) {
+      // Jeśli wystąpił błąd "typed columns", zwróć false
+      if (String(e.message).includes('typed column') || 
+          String(e.message).includes('not allowed')) {
+        Logger.log(`Nie można zsynchronizować checkboxa w wierszu ${row} (typed column) - pomijam`);
+        return false; // Typed column - nie można zsynchronizować
       }
       
-      // Ustaw wartość
-      cell.setValue(value === true ? true : false);
-    } catch (e) {
-      Logger.log(`Błąd ustawiania checkboxa w wierszu ${row}: ${e.message}`);
+      // Inny błąd - spróbuj dodać Data Validation
+      try {
+        const dataValidation = cell.getDataValidation();
+        if (!dataValidation) {
+          const rule = SpreadsheetApp.newDataValidation()
+            .requireCheckbox()
+            .setAllowInvalid(false)
+            .build();
+          cell.setDataValidation(rule);
+        }
+        cell.setValue(value === true ? true : false);
+        return true; // Sukces
+      } catch (e2) {
+        Logger.log(`Błąd ustawiania checkboxa w wierszu ${row}: ${e2.message}`);
+        return false; // Niepowodzenie
+      }
     }
   }
 
@@ -523,6 +537,7 @@ function massCheckAndFixUcancamLinks() {
   
   const checkboxInconsistencies = []; // różne stany checkboxów dla tego samego elementu
   let autoFilledCheckboxCount = 0;
+  let skippedTypedColumns = 0; // licznik typed columns które nie mogły być zsynchronizowane
 
   for (const [elementName, entries] of Object.entries(elementCheckboxes)) {
     // Filtruj tylko te które mają wartość (true/false), ignoruj null (brak checkboxa)
@@ -540,10 +555,14 @@ function massCheckAndFixUcancamLinks() {
       const validState = uniqueStates[0];
       for (const e of entries) {
         if (e.checked === null) {
-          // Checkbox nie ma wartości - ustaw
+          // Checkbox nie ma wartości - spróbuj ustawić
           const sheet = ss.getSheetByName(e.sheet);
-          setCheckboxValue(sheet, e.row, e.col, validState);
-          autoFilledCheckboxCount++;
+          const success = setCheckboxValue(sheet, e.row, e.col, validState);
+          if (success) {
+            autoFilledCheckboxCount++;
+          } else {
+            skippedTypedColumns++; // Typed column - nie można zsynchronizować
+          }
         }
       }
     } else {
@@ -629,11 +648,19 @@ function massCheckAndFixUcancamLinks() {
         
         // Ustaw wybrany stan we wszystkich wystąpieniach (włącznie z tymi bez checkboxa)
         const allEntries = elementCheckboxes[name] || [];
+        let successCount = 0;
         for (const e of allEntries) {
           const sheet = ss.getSheetByName(e.sheet);
-          setCheckboxValue(sheet, e.row, e.col, chosenState);
+          const success = setCheckboxValue(sheet, e.row, e.col, chosenState);
+          if (success) {
+            successCount++;
+          } else {
+            skippedTypedColumns++;
+          }
         }
-        fixedCheckboxConflicts++;
+        if (successCount > 0) {
+          fixedCheckboxConflicts++;
+        }
       } else {
         ui.alert(`❌ Podano nieprawidłowy numer. Pomijam element "${name}".`);
       }
@@ -652,7 +679,7 @@ function massCheckAndFixUcancamLinks() {
   // Podsumowanie UCANCAM
   summaryLines.push(`📦 LINKI UCANCAM (kolumna F):`);
   if (autoFilledCount > 0) {
-    summaryLines.push(`  ✅ Automatycznie uzupełniono ${autoFilledCount} pustych komórkach.`);
+    summaryLines.push(`  ✅ Automatycznie uzupełniono ${autoFilledCount} pustych komórek.`);
   }
   if (fixedConflicts > 0) {
     summaryLines.push(`  🔧 Naprawiono konflikty dla ${fixedConflicts} elementów.`);
@@ -671,7 +698,10 @@ function massCheckAndFixUcancamLinks() {
   if (fixedCheckboxConflicts > 0) {
     summaryLines.push(`  🔧 Naprawiono konflikty dla ${fixedCheckboxConflicts} elementów.`);
   }
-  if (autoFilledCheckboxCount === 0 && fixedCheckboxConflicts === 0 && checkboxInconsistencies.length === 0) {
+  if (skippedTypedColumns > 0) {
+    summaryLines.push(`  ⚠️ Pominięto ${skippedTypedColumns} komórek z typed columns (wymagana ręczna synchronizacja).`);
+  }
+  if (autoFilledCheckboxCount === 0 && fixedCheckboxConflicts === 0 && checkboxInconsistencies.length === 0 && skippedTypedColumns === 0) {
     summaryLines.push(`  ✅ Wszystkie checkboxy są spójne.`);
   }
   
