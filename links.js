@@ -759,5 +759,105 @@ function massCheckAndFixUcancamLinks() {
     }
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // AKTUALIZACJA CHECKBOXÓW MODUŁÓW W ZESTAWACH CNC
+  // ═══════════════════════════════════════════════════════════════════════════
+  
+  Logger.log(`=== ROZPOCZYNAM AKTUALIZACJĘ MODUŁÓW ===`);
+  
+  const updatedModules = updateModuleCheckboxesInZestawy(
+    modData,
+    allModCheckboxValues,
+    zestData,
+    sheetsCache,
+    COL_ELEMENT,
+    COL_UPTODATE,
+    isModule
+  );
+  
+  Logger.log(`Zaktualizowano ${updatedModules} modułów w arkuszu Zestawy CNC`);
+  
+  if (updatedModules > 0) {
+    summaryLines.push('');
+    summaryLines.push(`🔄 MODUŁY W ZESTAWACH CNC:`);
+    summaryLines.push(`  ✅ Zaktualizowano checkboxy dla ${updatedModules} modułów.`);
+  }
+
   ui.alert('Sprawdzenie UCANCAM i UP-TO-DATE zakończone', summaryLines.join('\n'), ui.ButtonSet.OK);
+}
+
+/**
+ * Aktualizuje checkboxy modułów w arkuszu "Zestawy CNC" na podstawie statusu ich elementów.
+ * Moduł ma checkbox TRUE tylko wtedy, gdy WSZYSTKIE jego elementy w "Moduły CNC" mają TRUE.
+ */
+function updateModuleCheckboxesInZestawy(modData, allModCheckboxValues, zestData, sheetsCache, COL_ELEMENT, COL_UPTODATE, isModule) {
+  // 1. Zbuduj mapę: moduł -> status (czy wszystkie elementy są TRUE)
+  const moduleStatus = {}; // { "M1594": { allTrue: true, elementCount: 3 }, ... }
+  
+  // Przejdź przez wszystkie wiersze w "Moduły CNC"
+  for (let i = 1; i < modData.length; i++) {
+    const moduleName = String(modData[i][0]).trim(); // Kolumna A - Nr modułu
+    const elementName = String(modData[i][COL_ELEMENT]).trim(); // Kolumna B - element
+    
+    // Pomijamy puste wiersze i sprawdzamy tylko moduły
+    if (!moduleName || !isModule(moduleName)) continue;
+    if (!elementName || isModule(elementName)) continue; // Pomijamy inne moduły w kolumnie B
+    
+    // Pobierz wartość checkboxa elementu (już mamy w allModCheckboxValues)
+    const value = allModCheckboxValues[i - 1][0];
+    let checked = false;
+    
+    if (typeof value === 'boolean') {
+      checked = value;
+    } else if (typeof value === 'string') {
+      const upperValue = value.toUpperCase().trim();
+      checked = (upperValue === 'TRUE');
+    }
+    
+    // Inicjalizuj status modułu jeśli jeszcze nie istnieje
+    if (!moduleStatus[moduleName]) {
+      moduleStatus[moduleName] = { allTrue: true, elementCount: 0 };
+    }
+    
+    moduleStatus[moduleName].elementCount++;
+    
+    // Jeśli choć jeden element jest FALSE, cały moduł = FALSE
+    if (!checked) {
+      moduleStatus[moduleName].allTrue = false;
+    }
+  }
+  
+  // 2. Zaktualizuj checkboxy modułów w arkuszu "Zestawy CNC"
+  const zestSheet = sheetsCache['Zestawy CNC'];
+  let updatedCount = 0;
+  
+  for (let i = 1; i < zestData.length; i++) {
+    const cellValue = String(zestData[i][COL_ELEMENT]).trim(); // Kolumna B
+    
+    // Sprawdź czy to moduł i czy mamy dla niego status
+    if (isModule(cellValue) && moduleStatus[cellValue]) {
+      const shouldBeTrue = moduleStatus[cellValue].allTrue;
+      const currentValue = zestData[i][COL_UPTODATE]; // Kolumna G (0-based = 6)
+      
+      // Konwersja currentValue na boolean
+      let currentBool = false;
+      if (typeof currentValue === 'boolean') {
+        currentBool = currentValue;
+      } else if (typeof currentValue === 'string') {
+        currentBool = (currentValue.toUpperCase().trim() === 'TRUE');
+      }
+      
+      // Zaktualizuj tylko jeśli wartość się zmienia
+      if (currentBool !== shouldBeTrue) {
+        try {
+          zestSheet.getRange(i + 1, COL_UPTODATE + 1).setValue(shouldBeTrue);
+          updatedCount++;
+        } catch (e) {
+          Logger.log(`Nie można zaktualizować modułu ${cellValue} w wierszu ${i + 1}: ${e.message}`);
+        }
+      }
+    }
+  }
+  
+  return updatedCount;
 }
