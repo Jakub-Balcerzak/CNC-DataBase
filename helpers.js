@@ -50,6 +50,12 @@ function isModuleName(name) {
   return /^[MX]/i.test(name);
 }
 
+function isSetName(name) {
+  if (!name) return false;
+  name = String(name).trim();
+  return /^P/i.test(name);
+}
+
 function findLinkForElement(name, modulesMap, zestawyMap) {
   if (linkCache[name]) return linkCache[name];
   for (let key in modulesMap) {
@@ -164,6 +170,7 @@ function createSummaryTxtFile(downloaded, folder, filename) {
 function collectElementTotals(name, multiplier, modulesMap, zestawyMap, totals, pathVisited, moduleMap, parentModule) {
   name = String(name).trim();
   if (!name) return;
+  
   // If this is a module, descend into its children and mark current module as parent
   if (isModuleName(name)) {
     if (pathVisited[name]) {
@@ -181,6 +188,29 @@ function collectElementTotals(name, multiplier, modulesMap, zestawyMap, totals, 
       const childCount = (typeof ch.count === 'number' && !isNaN(ch.count) && ch.count > 0) ? ch.count : 1;
       // pass current module name as parentModule for children
       collectElementTotals(ch.text, multiplier * childCount, modulesMap, zestawyMap, totals, pathVisited, moduleMap, name);
+    }
+
+    pathVisited[name] = false;
+    return;
+  }
+  
+  // If this is a nested set (starts with P), descend into its children
+  if (isSetName(name)) {
+    if (pathVisited[name]) {
+      return;
+    }
+    pathVisited[name] = true;
+
+    const children = zestawyMap[name];
+    if (!children || children.length === 0) {
+      pathVisited[name] = false;
+      return;
+    }
+
+    for (let ch of children) {
+      const childCount = (typeof ch.count === 'number' && !isNaN(ch.count) && ch.count > 0) ? ch.count : 1;
+      // pass parentModule through for nested set children
+      collectElementTotals(ch.text, multiplier * childCount, modulesMap, zestawyMap, totals, pathVisited, moduleMap, parentModule);
     }
 
     pathVisited[name] = false;

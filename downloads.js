@@ -25,9 +25,10 @@ function downloadSetFilesWithColors(setId) {
     return;
   }
 
-  // Zbierz listę unikalnych elementów (rozwiń moduły rekurencyjnie)
+  // Zbierz listę unikalnych elementów (rozwiń moduły i zagnieżdżone zestawy rekurencyjnie)
   const elements = [];
   const seen = new Set();
+  const visitedPath = new Set();
   const collect = (list, parentModule) => {
     for (const e of list) {
       if (!e || !e.text) continue;
@@ -37,6 +38,13 @@ function downloadSetFilesWithColors(setId) {
       if (isModuleName(name)) {
         const children = modulesMap[name] || [];
         collect(children, name);
+      } else if (isSetName(name) && name !== setId) {
+        // Zagnieżdżony zestaw - rozwiń rekurencyjnie
+        if (visitedPath.has(name)) continue; // zapobiegaj cyklom
+        visitedPath.add(name);
+        const children = zestawyMap[name] || [];
+        collect(children, parentModule);
+        visitedPath.delete(name);
       } else {
         if (!seen.has(name)) {
           seen.add(name);
@@ -471,6 +479,22 @@ function startDownloadWithColors(colorMap, setId) {
         for (let ch of children) {
           const childCount = (typeof ch.count === 'number' && !isNaN(ch.count) && ch.count > 0) ? ch.count : 1;
           collectWithModules(ch.text, multiplier * childCount, name, false);
+        }
+      }
+      pathVisited[name] = false;
+      return;
+    }
+    
+    // Zagnieżdżony zestaw (zaczyna się od P) - rozwiń rekurencyjnie
+    if (isSetName(name) && name !== setId) {
+      if (pathVisited[name]) return;
+      pathVisited[name] = true;
+
+      const children = zestawyMap[name];
+      if (children && children.length > 0) {
+        for (let ch of children) {
+          const childCount = (typeof ch.count === 'number' && !isNaN(ch.count) && ch.count > 0) ? ch.count : 1;
+          collectWithModules(ch.text, multiplier * childCount, parentModule, false);
         }
       }
       pathVisited[name] = false;
